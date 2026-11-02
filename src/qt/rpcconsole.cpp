@@ -73,6 +73,7 @@ namespace {
 
 // don't add private key handling cmd's to the history
 const QStringList historyFilter = QStringList()
+    << "addhdkey"
     << "createwallet"
     << "createwalletdescriptor"
     << "migratewallet"
@@ -159,6 +160,7 @@ bool RPCConsole::RPCParseCommandLine(interfaces::Node* node, std::string &strRes
     } state = STATE_EATING_SPACES;
     std::string curarg;
     UniValue lastResult;
+    bool command_parsed = false;
     unsigned nDepthInsideSensitive = 0;
     size_t filter_begin_pos = 0, chpos;
     std::vector<std::pair<size_t, size_t>> filter_ranges;
@@ -188,7 +190,7 @@ bool RPCConsole::RPCParseCommandLine(interfaces::Node* node, std::string &strRes
 
     std::string strCommandTerminated = strCommand;
     if (strCommandTerminated.back() != '\n')
-        strCommandTerminated += "\n";
+        strCommandTerminated += '\n';
     for (chpos = 0; chpos < strCommandTerminated.size(); ++chpos)
     {
         char ch = strCommandTerminated[chpos];
@@ -290,7 +292,7 @@ bool RPCConsole::RPCParseCommandLine(interfaces::Node* node, std::string &strRes
                         curarg.clear();
                         state = STATE_EATING_SPACES_IN_BRACKETS;
                     }
-                    if ((ch == ')' || ch == '\n') && stack.size() > 0)
+                    if ((ch == ')' || ch == '\n') && stack.size() > 0 && stack.back().size() > 0)
                     {
                         if (fExecute) {
                             // Convert argument list to JSON objects in method-dependent way,
@@ -306,6 +308,7 @@ bool RPCConsole::RPCParseCommandLine(interfaces::Node* node, std::string &strRes
                             lastResult = node->executeRpc(method, params, uri);
                         }
 
+                        command_parsed = true;
                         state = STATE_COMMAND_EXECUTED;
                         curarg.clear();
                     }
@@ -372,8 +375,11 @@ bool RPCConsole::RPCParseCommandLine(interfaces::Node* node, std::string &strRes
                 strResult = lastResult.write(2);
             [[fallthrough]];
         case STATE_ARGUMENT:
-        case STATE_EATING_SPACES:
             return true;
+        case STATE_EATING_SPACES:
+            // Reaching this state without ever parsing a command means the line
+            // held no command name (e.g. ")", "()", "(", ","); treat it as invalid.
+            return command_parsed;
         default: // ERROR to end in one of the other states
             return false;
     }

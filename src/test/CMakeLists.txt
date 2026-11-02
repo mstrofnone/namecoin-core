@@ -15,14 +15,17 @@ add_executable(test_namecoin
   banman_tests.cpp
   base32_tests.cpp
   base64_tests.cpp
+  baseindex_tests.cpp
   bech32_tests.cpp
   bip32_tests.cpp
   bip324_tests.cpp
+  bip352_tests.cpp
   blockchain_tests.cpp
   blockencodings_tests.cpp
   blockfilter_index_tests.cpp
   blockfilter_tests.cpp
   blockmanager_tests.cpp
+  blockpolicyestimator_tests.cpp
   bloom_tests.cpp
   bswap_tests.cpp
   btcsignals_tests.cpp
@@ -42,6 +45,7 @@ add_executable(test_namecoin
   dbwrapper_tests.cpp
   denialofservice_tests.cpp
   disconnected_transactions.cpp
+  fees_util_tests.cpp
   feefrac_tests.cpp
   feerounder_tests.cpp
   flatfile_tests.cpp
@@ -54,12 +58,12 @@ add_executable(test_namecoin
   interfaces_tests.cpp
   logging_tests.cpp
   mempool_tests.cpp
+  mempool_fee_estimator_tests.cpp
   merkle_tests.cpp
   merkleblock_tests.cpp
   miniminer_tests.cpp
   miniscript_tests.cpp
   minisketch_tests.cpp
-  mock_process.cpp
   multisig_tests.cpp
   name_tests.cpp
   name_applications_tests.cpp
@@ -75,12 +79,11 @@ add_executable(test_namecoin
   pcp_tests.cpp
   peerman_tests.cpp
   pmt_tests.cpp
-  policyestimator_tests.cpp
   pool_tests.cpp
   pow_tests.cpp
   prevector_tests.cpp
   private_broadcast_tests.cpp
-  raii_event_tests.cpp
+  psbt_tests.cpp
   random_tests.cpp
   rbf_tests.cpp
   rest_tests.cpp
@@ -123,6 +126,7 @@ add_executable(test_namecoin
   txvalidationcache_tests.cpp
   uint256_tests.cpp
   util_check_tests.cpp
+  util_not_null_tests.cpp
   util_expected_tests.cpp
   util_string_tests.cpp
   util_tests.cpp
@@ -149,11 +153,13 @@ include(TargetDataSources)
 target_json_data_sources(test_namecoin
   data/base58_encode_decode.json
   data/bip341_wallet_vectors.json
+  data/bip352_send_and_receive_vectors.json
   data/blockfilters.json
   data/key_io_invalid.json
   data/key_io_valid.json
   data/script_tests.json
   data/sighash.json
+  data/siphash.json
   data/tx_invalid.json
   data/tx_valid.json
 )
@@ -172,17 +178,8 @@ target_link_libraries(test_namecoin
   minisketch
   secp256k1
   Boost::headers
-  libevent::extra
   $<TARGET_NAME_IF_EXISTS:USDT::headers>
 )
-
-if(ENABLE_WALLET)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/wallet/test wallet)
-endif()
-
-if(ENABLE_IPC)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/src/ipc/test ipc)
-endif()
 
 function(add_boost_test source_file)
   if(NOT EXISTS ${source_file})
@@ -197,8 +194,6 @@ function(add_boost_test source_file)
   list(TRANSFORM test_suite_macro
     REPLACE "(BOOST_FIXTURE_TEST_SUITE|BOOST_AUTO_TEST_SUITE)\\(" ""
   )
-  # The mock_process test suite does not contain unit tests.
-  list(REMOVE_ITEM test_suite_macro "mock_process")
   foreach(test_suite_name IN LISTS test_suite_macro)
     add_test(NAME ${test_suite_name}
       COMMAND test_namecoin --run_test=${test_suite_name} --catch_system_error=no --log_level=test_suite -- -printtoconsole=1
@@ -207,7 +202,6 @@ function(add_boost_test source_file)
       SKIP_REGULAR_EXPRESSION
         "no test cases matching filter"
         "skipping script_assets_test"
-        "skipping total_ram"
     )
   endforeach()
 endfunction()
@@ -223,6 +217,14 @@ function(add_all_test_targets)
     add_boost_test(${test_source})
   endforeach()
 endfunction()
+
+if(ENABLE_WALLET)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/wallet/test wallet)
+endif()
+
+if(ENABLE_IPC)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/src/ipc/test ipc)
+endif()
 
 add_all_test_targets()
 

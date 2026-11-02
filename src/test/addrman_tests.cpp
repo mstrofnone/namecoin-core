@@ -9,8 +9,10 @@
 #include <clientversion.h>
 #include <hash.h>
 #include <netbase.h>
+#include <netgroup.h>
 #include <random.h>
 #include <test/data/asmap.raw.h>
+#include <test/util/common.h>
 #include <test/util/setup_common.h>
 #include <test/util/time.h>
 #include <util/asmap.h>
@@ -18,9 +20,13 @@
 
 #include <boost/test/unit_test.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
 using namespace std::literals;
 using node::NodeContext;
@@ -97,8 +103,7 @@ BOOST_AUTO_TEST_CASE(addrman_simple)
 
 BOOST_AUTO_TEST_CASE(addrman_terrible_many_failures)
 {
-    auto now = Now<NodeSeconds>();
-    SetMockTime(now - (ADDRMAN_MIN_FAIL + 24h));
+    FakeNodeClock clock{};
 
     auto addrman{std::make_unique<AddrMan>(EMPTY_NETGROUPMAN, DETERMINISTIC, GetCheckRatio(m_node))};
 
@@ -109,7 +114,7 @@ BOOST_AUTO_TEST_CASE(addrman_terrible_many_failures)
     BOOST_CHECK(addrman->Add({addr}, source));
     BOOST_CHECK(addrman->Good(addr));
 
-    SetMockTime(now);
+    clock += ADDRMAN_MIN_FAIL + 24h;
 
     CAddress addr_helper{CAddress(ResolveService("251.252.2.3", 8333), NODE_NONE)};
     addr_helper.nTime = Now<NodeSeconds>();
@@ -132,7 +137,7 @@ BOOST_AUTO_TEST_CASE(addrman_terrible_many_failures)
 
 BOOST_AUTO_TEST_CASE(addrman_penalty_self_announcement)
 {
-    SetMockTime(Now<NodeSeconds>());
+    FakeNodeClock clock{};
     auto addrman = std::make_unique<AddrMan>(EMPTY_NETGROUPMAN, DETERMINISTIC, GetCheckRatio(m_node));
 
     const auto base_time{Now<NodeSeconds>() - 10000s};
@@ -322,6 +327,62 @@ BOOST_AUTO_TEST_CASE(addrman_select_by_network)
 
     BOOST_CHECK(new_selected);
     BOOST_CHECK(tried_selected);
+}
+
+BOOST_AUTO_TEST_CASE(addrman_select_uniform_in_bucket)
+{
+    auto addrman = std::make_unique<AddrMan>(EMPTY_NETGROUPMAN, DETERMINISTIC, GetCheckRatio(m_node));
+    CNetAddr source = ResolveIP("252.2.2.2");
+
+    // With the deterministic key, these addresses all end up in new bucket 224, at the listed
+    // positions. Picking the first entry found when scanning from a random position would
+    // strongly favor entries following a gap: in each of the cases tested below, one entry
+    // would be selected 61/64 or 63/64 of the time.
+    const std::vector<std::pair<CService, int>> entries{
+        {ResolveService("250.33.1.1", 8333), 0},
+        {ResolveService("250.53.1.1", 8333), 1},
+        {ResolveService("2a01:e::1", 8333), 62},
+        {ResolveService("2a01:a0::1", 8333), 63},
+    };
+    for (const auto& [addr, position] : entries) {
+        BOOST_REQUIRE(addrman->Add({CAddress(addr, NODE_NONE)}, source));
+        const auto addr_pos{addrman->FindAddressEntry(CAddress(addr, NODE_NONE))};
+        BOOST_REQUIRE(addr_pos.has_value());
+        BOOST_REQUIRE(!addr_pos->tried);
+        BOOST_REQUIRE_EQUAL(addr_pos->bucket, 224);
+        BOOST_REQUIRE_EQUAL(addr_pos->position, position);
+    }
+
+    // Verify that Select() only returns entries matching networks, and picks each of them
+    // equally often.
+    const auto check_uniform = [&](const std::unordered_set<Network>& networks) {
+        std::vector<CService> matching;
+        for (const auto& [addr, position] : entries) {
+            if (networks.empty() || networks.contains(addr.GetNetwork())) matching.push_back(addr);
+        }
+        constexpr int SAMPLES{600};
+        std::vector<int> counts(matching.size());
+        for (int i = 0; i < SAMPLES; ++i) {
+            const CService selected{addrman->Select(/*new_only=*/false, networks).first};
+            const auto it{std::find(matching.begin(), matching.end(), selected)};
+            BOOST_REQUIRE(it != matching.end());
+            ++counts[it - matching.begin()];
+        }
+        // Compare the counts with a uniform distribution using a chi-square test. The critical
+        // values correspond to a false positive probability of 1e-9, for 1 and 3 degrees of
+        // freedom (2 and 4 matching entries) respectively.
+        BOOST_REQUIRE(matching.size() == 2 || matching.size() == 4);
+        const double chi_square_critical{matching.size() == 2 ? 37.32 : 44.84};
+        const double expected_count{double(SAMPLES) / matching.size()};
+        double chi_square{0.0};
+        for (int count : counts) {
+            chi_square += (count - expected_count) * (count - expected_count) / expected_count;
+        }
+        BOOST_CHECK_LT(chi_square, chi_square_critical);
+    };
+    check_uniform({});
+    check_uniform({NET_IPV4});
+    check_uniform({NET_IPV6});
 }
 
 BOOST_AUTO_TEST_CASE(addrman_select_special)
@@ -1031,8 +1092,8 @@ BOOST_AUTO_TEST_CASE(addrman_evictionworks)
     BOOST_CHECK_EQUAL(addrman->SelectTriedCollision().first.ToStringAddrPort(), "250.1.1.36:0");
 
     // Eviction is also successful if too much time has passed since last try
-    NodeClockContext clock_ctx{};
-    clock_ctx += 4h;
+    FakeNodeClock clock{};
+    clock += 4h;
     addrman->ResolveCollisions();
     BOOST_CHECK(addrman->SelectTriedCollision().first.ToStringAddrPort() == "[::]:0");
     //Now 19 is in tried again, and 36 back to new
@@ -1075,20 +1136,15 @@ BOOST_AUTO_TEST_CASE(load_addrman)
 
     // Test that the de-serialization does not throw an exception.
     auto ssPeers1{AddrmanToStream(addrman)};
-    bool exceptionThrown = false;
     AddrMan addrman1{EMPTY_NETGROUPMAN, !DETERMINISTIC, GetCheckRatio(m_node)};
 
     BOOST_CHECK(addrman1.Size() == 0);
-    try {
+    {
         unsigned char pchMsgTmp[4];
-        ssPeers1 >> pchMsgTmp;
-        ssPeers1 >> addrman1;
-    } catch (const std::exception&) {
-        exceptionThrown = true;
+        BOOST_CHECK_NO_THROW(ssPeers1 >> pchMsgTmp >> addrman1);
     }
 
     BOOST_CHECK(addrman1.Size() == 3);
-    BOOST_CHECK(exceptionThrown == false);
 
     // Test that ReadFromStream creates an addrman with the correct number of addrs.
     DataStream ssPeers2 = AddrmanToStream(addrman);
@@ -1130,17 +1186,14 @@ BOOST_AUTO_TEST_CASE(load_addrman_corrupted)
 {
     // Test that the de-serialization of corrupted peers.dat throws an exception.
     auto ssPeers1{MakeCorruptPeersDat()};
-    bool exceptionThrown = false;
     AddrMan addrman1{EMPTY_NETGROUPMAN, !DETERMINISTIC, GetCheckRatio(m_node)};
     BOOST_CHECK(addrman1.Size() == 0);
-    try {
+    BOOST_CHECK_EXCEPTION([&]
+    {
         unsigned char pchMsgTmp[4];
         ssPeers1 >> pchMsgTmp;
         ssPeers1 >> addrman1;
-    } catch (const std::exception&) {
-        exceptionThrown = true;
-    }
-    BOOST_CHECK(exceptionThrown);
+    }(), std::ios_base::failure, HasReason{"end of data"});
 
     // Test that ReadFromStream fails if peers.dat is corrupt
     auto ssPeers2{MakeCorruptPeersDat()};

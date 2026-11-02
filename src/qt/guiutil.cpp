@@ -113,15 +113,15 @@ static std::string DummyAddress(const CChainParams &params)
     std::string addr;
     switch (params.GetChainType()) {
     case ChainType::MAIN:
-        addr = "bc1p35yvjel7srp783ztf8v6jdra7dhfzk5jaun8xz2qp6ws7z80n4tq2jku9f";
+        addr = "nc1p35yvjel7srp783ztf8v6jdra7dhfzk5jaun8xz2qp6ws7z80n4tq2jku9f";
         break;
     case ChainType::SIGNET:
     case ChainType::TESTNET:
     case ChainType::TESTNET4:
-        addr = "tb1p35yvjel7srp783ztf8v6jdra7dhfzk5jaun8xz2qp6ws7z80n4tqa6qnlg";
+        addr = "tn1p35yvjel7srp783ztf8v6jdra7dhfzk5jaun8xz2qp6ws7z80n4tqa6qnlg";
         break;
     case ChainType::REGTEST:
-        addr = "bcrt1p35yvjel7srp783ztf8v6jdra7dhfzk5jaun8xz2qp6ws7z80n4tqsr2427";
+        addr = "ncrt1p35yvjel7srp783ztf8v6jdra7dhfzk5jaun8xz2qp6ws7z80n4tqsr2427";
         break;
     } // no default case, so the compiler can warn about missing cases
     assert(!addr.empty());
@@ -292,6 +292,8 @@ bool hasEntryData(const QAbstractItemView *view, int column, int role)
 
 void LoadFont(const QString& file_name)
 {
+    // The qminimal plugin does not provide font loading support.
+    if (QApplication::platformName() == "minimal") return;
     const int id = QFontDatabase::addApplicationFont(file_name);
     assert(id != -1);
 }
@@ -972,7 +974,11 @@ void PrintSlotException(
 {
     std::string description = sender->metaObject()->className();
     description += "->";
-    description += receiver->metaObject()->className();
+    if (receiver) {
+        description += receiver->metaObject()->className();
+    } else {
+        description += "anonymous function";
+    }
     PrintExceptionContinue(exception, description);
 }
 

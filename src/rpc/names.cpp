@@ -1021,7 +1021,7 @@ namerawtransaction ()
           HelpExampleCli ("namerawtransaction", R"("raw tx hex" 1 "{\"op\":\"name_new\",\"name\":\"my-name\")")
         + HelpExampleCli ("namerawtransaction", R"("raw tx hex" 1 "{\"op\":\"name_firstupdate\",\"name\":\"my-name\",\"value\":\"new value\",\"rand\":\"00112233\")")
         + HelpExampleCli ("namerawtransaction", R"("raw tx hex" 1 "{\"op\":\"name_update\",\"name\":\"my-name\",\"value\":\"new value\")")
-        + HelpExampleRpc ("namerawtransaction", R"("raw tx hex", 1, "{\"op\":\"name_update\",\"name\":\"my-name\",\"value\":\"new value\")")
+        + HelpExampleRpc ("namerawtransaction", R"("raw tx hex", 1, {"op":"name_update","name":"my-name","value":"new value"})")
       },
       [&] (const RPCMethod& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -1068,23 +1068,27 @@ namepsbt ()
           HelpExampleCli ("namepsbt", R"("psbt" 1 "{\"op\":\"name_new\",\"name\":\"my-name\")")
         + HelpExampleCli ("namepsbt", R"("psbt" 1 "{\"op\":\"name_firstupdate\",\"name\":\"my-name\",\"value\":\"new value\",\"rand\":\"00112233\")")
         + HelpExampleCli ("namepsbt", R"("psbt" 1 "{\"op\":\"name_update\",\"name\":\"my-name\",\"value\":\"new value\")")
-        + HelpExampleRpc ("namepsbt", R"("psbt", 1, "{\"op\":\"name_update\",\"name\":\"my-name\",\"value\":\"new value\")")
+        + HelpExampleRpc ("namepsbt", R"("psbt", 1, {"op":"name_update","name":"my-name","value":"new value"})")
       },
       [&] (const RPCMethod& self, const JSONRPCRequest& request) -> UniValue
 {
-  PartiallySignedTransaction psbtx;
-  std::string error;
-  if (!DecodeBase64PSBT (psbtx, request.params[0].get_str (), error))
+  util::Result<PartiallySignedTransaction> psbt_res
+      = DecodeBase64PSBT (request.params[0].get_str ());
+  if (!psbt_res)
     throw JSONRPCError (RPC_DESERIALIZATION_ERROR,
-                        strprintf ("TX decode failed %s", error));
+                        strprintf ("TX decode failed %s",
+                        util::ErrorString(psbt_res).original));
+  const PartiallySignedTransaction psbtx = *psbt_res;
 
   UniValue result(UniValue::VOBJ);
 
+  CMutableTransaction mtx = *CHECK_NONFATAL (psbtx.GetUnsignedTx ());
   PerformNameRawtx (request.params[1].getInt<int> (),
-                    request.params[2].get_obj (), *psbtx.tx, result);
+                    request.params[2].get_obj (), mtx, result);
+  const PartiallySignedTransaction psbt2(mtx, psbtx.GetVersion ());
 
   DataStream ssTx;
-  ssTx << psbtx;
+  ssTx << psbt2;
   result.pushKV ("psbt", EncodeBase64 (MakeUCharSpan (ssTx)));
 
   return result;

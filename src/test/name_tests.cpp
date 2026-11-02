@@ -11,12 +11,13 @@
 #include <policy/policy.h>
 #include <policy/settings.h>
 #include <primitives/transaction.h>
+#include <script/interpreter.h>
 #include <script/names.h>
 #include <txdb.h>
 #include <undo.h>
 #include <validation.h>
 
-#include <test/util/common.h>
+#include <test/util/coins.h>
 #include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
@@ -114,6 +115,37 @@ BOOST_AUTO_TEST_CASE (name_scripts)
   BOOST_CHECK (opUpdate.getNameOp () == OP_NAME_UPDATE);
   BOOST_CHECK (opUpdate.getOpName () == name);
   BOOST_CHECK (opUpdate.getOpValue () == value);
+}
+
+/* ************************************************************************** */
+
+BOOST_AUTO_TEST_CASE (name_taproot_precomputed_data)
+{
+  /* A name output whose address part is a Taproot program must be detected as
+     a Taproot spend by PrecomputedTransactionData, even though the full
+     scriptPubKey carries a name prefix.  Otherwise, SignatureHashSchnorr would
+     hit the missing-data path and abort.  */
+
+  const std::vector<unsigned char> program (32, 0x42);
+  CScript p2tr;
+  p2tr << OP_1 << program;
+  BOOST_CHECK (p2tr.IsPayToTaproot (false));
+  BOOST_CHECK (p2tr.IsPayToTaproot (true));
+
+  const valtype name = DecodeName ("taproot-test", NameEncoding::ASCII);
+  const valtype value = DecodeName ("42!", NameEncoding::ASCII);
+  const CScript nameP2TR = CNameScript::buildNameUpdate (p2tr, name, value);
+  BOOST_CHECK (!nameP2TR.IsPayToTaproot (false));
+  BOOST_CHECK (nameP2TR.IsPayToTaproot (true));
+
+  CMutableTransaction mtx;
+  mtx.vin.resize (1);
+  mtx.vin[0].scriptWitness.stack = {std::vector<unsigned char> (64, 0)};
+
+  PrecomputedTransactionData txdata;
+  txdata.Init (mtx, {CTxOut (1000, nameP2TR)});
+  BOOST_CHECK (txdata.m_spent_outputs_ready);
+  BOOST_CHECK (txdata.m_bip341_taproot_ready);
 }
 
 /* ************************************************************************** */
@@ -225,7 +257,7 @@ private:
 public:
 
   CNameIterator*
-  IterateNames () const
+  IterateNames () const override
   {
     return new Iterator ();
   }
@@ -936,7 +968,7 @@ BOOST_AUTO_TEST_CASE (name_expire_utxo)
 
 BOOST_AUTO_TEST_CASE (encoding_to_from_string)
 {
-  for (const std::string& encStr : {"ascii", "utf8", "hex"})
+  for (const std::string encStr : {"ascii", "utf8", "hex"})
     BOOST_CHECK_EQUAL (EncodingToString (EncodingFromString (encStr)), encStr);
 
   BOOST_CHECK_EQUAL (EncodingToString (NameEncoding::ASCII), "ascii");
