@@ -16,10 +16,12 @@ target_sources(test_namecoin
     init_tests.cpp
     ismine_tests.cpp
     psbt_wallet_tests.cpp
+    rescan_tests.cpp
     rpcnames_tests.cpp
     scriptpubkeyman_tests.cpp
     spend_tests.cpp
     wallet_crypto_tests.cpp
+    wallet_interfaces_tests.cpp
     wallet_rpc_tests.cpp
     wallet_tests.cpp
     wallet_transaction_tests.cpp

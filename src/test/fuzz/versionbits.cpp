@@ -2,18 +2,20 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <versionbits.h>
+
 #include <chain.h>
 #include <chainparams.h>
 #include <common/args.h>
 #include <consensus/params.h>
 #include <primitives/block.h>
-#include <util/chaintype.h>
-#include <versionbits.h>
-#include <versionbits_impl.h>
-
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
+#include <test/util/versionbits.h>
+#include <util/chaintype.h>
+#include <util/check.h>
+#include <versionbits_impl.h>
 
 #include <cstdint>
 #include <limits>
@@ -31,7 +33,7 @@ public:
     {
         assert(dep.period > 0);
         assert(dep.threshold <= dep.period);
-        assert(0 <= dep.bit && dep.bit < 32 && dep.bit < VERSIONBITS_NUM_BITS);
+        assert(0 <= dep.bit && dep.bit < 32 && dep.bit < VERSIONBITS_MAX_NUM_BITS);
         assert(0 <= dep.min_activation_height);
     }
 
@@ -126,7 +128,7 @@ FUZZ_TARGET(versionbits, .init = initialize)
         assert(0 < dep.threshold && dep.threshold <= dep.period); // must be able to both pass and fail threshold!
 
         // select deployment parameters: bit, start time, timeout
-        dep.bit = fuzzed_data_provider.ConsumeIntegralInRange<int>(0, VERSIONBITS_NUM_BITS - 1);
+        dep.bit = fuzzed_data_provider.ConsumeIntegralInRange<int>(0, VERSIONBITS_MAX_NUM_BITS - 1);
 
         if (always_active_test) {
             dep.nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;

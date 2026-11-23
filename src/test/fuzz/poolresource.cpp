@@ -10,6 +10,7 @@
 #include <test/fuzz/util.h>
 #include <test/util/poolresourcetester.h>
 #include <util/byte_units.h>
+#include <util/check.h>
 
 #include <cstdint>
 #include <tuple>
@@ -116,8 +117,7 @@ public:
 
     void Fuzz()
     {
-        LIMITED_WHILE(m_provider.ConsumeBool(), 10000)
-        {
+        LIMITED_WHILE (m_provider.ConsumeBool(), 10000) {
             CallOneOf(
                 m_provider,
                 [&] { Allocate(); },

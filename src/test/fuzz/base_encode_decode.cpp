@@ -2,19 +2,18 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <test/fuzz/fuzz.h>
-
 #include <base58.h>
 #include <psbt.h>
 #include <span.h>
 #include <test/fuzz/FuzzedDataProvider.h>
+#include <test/fuzz/fuzz.h>
+#include <util/check.h>
 #include <util/strencodings.h>
 #include <util/string.h>
 
-#include <cassert>
+#include <ranges>
 #include <string>
 #include <vector>
-#include <ranges>
 
 using util::TrimStringView;
 
@@ -90,8 +89,5 @@ FUZZ_TARGET(psbt_base64_decode)
 {
     const std::string random_string{buffer.begin(), buffer.end()};
 
-    PartiallySignedTransaction psbt;
-    std::string error;
-    const bool ok{DecodeBase64PSBT(psbt, random_string, error)};
-    assert(ok == error.empty());
+    util::Result<PartiallySignedTransaction> psbt = DecodeBase64PSBT(random_string);
 }

@@ -2,8 +2,9 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <chainparams.h>
 #include <key.h>
+
+#include <chainparams.h>
 #include <key_io.h>
 #include <outputtype.h>
 #include <policy/policy.h>
@@ -20,10 +21,10 @@
 #include <test/fuzz/util.h>
 #include <test/util/random.h>
 #include <util/chaintype.h>
+#include <util/check.h>
 #include <util/strencodings.h>
 
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <numeric>
@@ -85,7 +86,7 @@ FUZZ_TARGET(key, .init = initialize_key)
     {
         CKey child_key;
         ChainCode child_chaincode;
-        const bool ok = key.Derive(child_key, child_chaincode, 0, random_uint256);
+        const bool ok = key.Derive(child_key, child_chaincode, 0, ChainCode{random_uint256});
         assert(ok);
         assert(child_key.IsValid());
         assert(!(child_key == key));
@@ -275,7 +276,7 @@ FUZZ_TARGET(key, .init = initialize_key)
     {
         CPubKey child_pubkey;
         ChainCode child_chaincode;
-        const bool ok = pubkey.Derive(child_pubkey, child_chaincode, 0, random_uint256);
+        const bool ok = pubkey.Derive(child_pubkey, child_chaincode, 0, ChainCode{random_uint256});
         assert(ok);
         assert(child_pubkey != pubkey);
         assert(child_pubkey.IsCompressed());

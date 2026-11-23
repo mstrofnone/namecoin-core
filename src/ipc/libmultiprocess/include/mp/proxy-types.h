@@ -13,6 +13,12 @@
 #include <typeindex>
 #include <vector>
 
+// KJ exception support is required, or exceptions thrown in serverInvoke below go uncaught
+// and crash the process instead of being returned to the client as errors.
+#if defined(KJ_NO_EXCEPTIONS) && KJ_NO_EXCEPTIONS
+#error "KJ_NO_EXCEPTIONS=1 is set but libmultiprocess requires support for exceptions. Please check build settings. On NetBSD you may also need to set -DKJ_NO_EXCEPTIONS=0 -DKJ_NO_RTTI=0 explicitly (https://github.com/capnproto/capnproto/pull/2756)"
+#endif
+
 namespace mp {
 
 template <typename Value>
@@ -204,7 +210,7 @@ struct ReadDestUpdate
 //! can only be used to disable ReadField() calls in certain contexts like
 //! std::optional and pointer contexts.
 template <typename... LocalTypes, typename Input>
-bool CustomHasField(TypeList<LocalTypes...>, InvokeContext& invoke_context, const Input& input)
+bool CustomHasField(TypeList<LocalTypes...>, InvokeContext&, const Input& input)
 {
     return input.has();
 }
@@ -220,14 +226,14 @@ void ThrowField(TypeList<LocalType>, InvokeContext& invoke_context, Input&& inpu
 {
     ReadField(
         TypeList<LocalType>(), invoke_context, input, ReadDestEmplace(TypeList<LocalType>(),
-            [](auto&& ...args) -> const LocalType& { throw LocalType{std::forward<decltype(args)>(args)...}; }));
+            [] [[noreturn]] (auto&& ...args) -> const LocalType& { throw LocalType{std::forward<decltype(args)>(args)...}; }));
 }
 
 //! Special case for generic std::exception. It's an abstract type so it can't
 //! be created directly. Rethrow as std::runtime_error so callers expecting it
 //! will still catch it.
 template <typename Input>
-void ThrowField(TypeList<std::exception>, InvokeContext& invoke_context, Input&& input)
+void ThrowField(TypeList<std::exception>, InvokeContext&, Input&& input)
 {
     auto data = input.get();
     throw std::runtime_error(std::string(CharCast(data.begin()), data.size()));
@@ -241,7 +247,7 @@ void ThrowField(TypeList<std::exception>, InvokeContext& invoke_context, Input&&
 //! way to represent them in Cap'n Proto and a null Data field is a convenient
 //! representation.
 template <typename... Values>
-bool CustomHasValue(InvokeContext& invoke_context, const Values&... value)
+bool CustomHasValue(InvokeContext&, const Values&...)
 {
     return true;
 }
@@ -279,6 +285,51 @@ struct ListOutput<::capnp::List<T, kind>>
     template<typename B = Builder, typename Arg> decltype(auto) init(Arg&& arg) const { return static_cast<B&>(this->m_builder).init(m_index, std::forward<Arg>(arg)); }
     // clang-format on
 };
+
+template <typename LocalType, typename Value, typename Output>
+void BuildList(TypeList<LocalType>, InvokeContext& invoke_context, Output&& output, Value&& value)
+{
+    auto list = output.init(value.size());
+    size_t i = 0;
+    // Iterate with an explicit iterator rather than a range-for loop so the
+    // value category of `*it` is passed through to BuildField unchanged. This
+    // matters for two reasons:
+    //
+    // - Elements must be passed as non-const so that BuildField can move out of
+    //   them, e.g. calling unique_ptr::release() to transfer ownership of an
+    //   interface pointer to the capnp server.
+    //
+    // - For proxy containers like std::vector<bool>, `*it` is a prvalue proxy
+    //   object rather than a reference. A range-for loop would bind it to a
+    //   named variable and demote it to an lvalue; passing `*it` directly
+    //   preserves the prvalue-ness.
+    //
+    // Only move out of elements when `value` itself is an rvalue container that
+    // is about to be destroyed. When it is an lvalue reference owned by the
+    // caller, pass elements as lvalues so BuildField does not move from them.
+    for (auto it = value.begin(); it != value.end(); ++it, ++i) {
+        if constexpr (std::is_lvalue_reference_v<Value&&>) {
+            BuildField(TypeList<LocalType>(), invoke_context, ListOutput<typename decltype(list)::Builds>(list, i), *it);
+        } else {
+            BuildField(TypeList<LocalType>(), invoke_context, ListOutput<typename decltype(list)::Builds>(list, i), std::move(*it));
+        }
+    }
+}
+
+template <typename LocalType, typename Input, typename ReadDest, typename InitFn, typename EmplaceFn>
+decltype(auto) ReadList(TypeList<LocalType>, InvokeContext& invoke_context, Input&& input, ReadDest&& read_dest, InitFn&& init, EmplaceFn&& emplace)
+{
+    return read_dest.update([&](auto& value) {
+        auto data = input.get();
+        init(value, data.size());
+        for (auto item : data) {
+            ReadField(TypeList<LocalType>(), invoke_context, Make<ValueField>(item),
+                      ReadDestEmplace(TypeList<LocalType>(), [&emplace, &value](auto&&... args) -> decltype(auto) {
+                          return emplace(value, std::forward<decltype(args)>(args)...);
+                      }));
+        }
+    });
+}
 
 template <typename LocalType, typename Value, typename Output>
 void CustomBuildField(TypeList<LocalType>, Priority<0>, InvokeContext& invoke_context, Value&& value, Output&& output)
@@ -408,7 +459,7 @@ struct ClientException
     struct BuildParams : IterateFieldsHelper<BuildParams, 0>
     {
         template <typename Params, typename ParamList>
-        void handleField(InvokeContext& invoke_context, Params& params, ParamList)
+        void handleField(InvokeContext&, Params&, ParamList)
         {
         }
 
@@ -573,7 +624,8 @@ struct ServerExcept : Parent
 //! Helper for CustomPassField below. Call Accessor::get method if it has one,
 //! otherwise return capnp::Void.
 template <typename Accessor, typename Message>
-decltype(auto) MaybeGet(Message&& message, decltype(Accessor::get(message))* enable = nullptr)
+decltype(auto) MaybeGet(Message&& message)
+    requires requires { Accessor::get(message); }
 {
     return Accessor::get(message);
 }
@@ -601,7 +653,7 @@ template <typename Accessor, typename... Args>
 auto PassField(Priority<2>, Args&&... args) -> decltype(CustomPassField<Accessor>(std::forward<Args>(args)...))
 {
     return CustomPassField<Accessor>(std::forward<Args>(args)...);
-};
+}
 
 template <int argc, typename Accessor, typename Parent>
 struct ServerField : Parent
@@ -644,17 +696,13 @@ struct CapRequestTraits<::capnp::Request<_Params, _Results>>
 template <typename Client>
 void clientDestroy(Client& client)
 {
-    if (client.m_context.connection) {
-        MP_LOG(*client.m_context.loop, Log::Debug) << "IPC client destroy " << typeid(client).name();
-    } else {
-        KJ_LOG(INFO, "IPC interrupted client destroy", typeid(client).name());
-    }
+    MP_LOG(*client.m_context.loop, Log::Debug) << "IPC client destroy " << CxxTypeName(client);
 }
 
 template <typename Server>
 void serverDestroy(Server& server)
 {
-    MP_LOG(*server.m_context.loop, Log::Debug) << "IPC server destroy " << typeid(server).name();
+    MP_LOG(*server.m_context.loop, Log::Debug) << "IPC server destroy " << CxxTypeName(server);
 }
 
 //! Entry point called by generated client code that looks like:
@@ -669,9 +717,9 @@ void serverDestroy(Server& server)
 template <typename ProxyClient, typename GetRequest, typename... FieldObjs>
 void clientInvoke(ProxyClient& proxy_client, const GetRequest& get_request, FieldObjs&&... fields)
 {
-    if (!g_thread_context.waiter) {
-        assert(g_thread_context.thread_name.empty());
-        g_thread_context.thread_name = ThreadName(proxy_client.m_context.loop->m_exe_name);
+    if (!CurrentThread().waiter) {
+        assert(CurrentThread().thread_name.empty());
+        CurrentThread().thread_name = ThreadName(proxy_client.m_context.loop->m_exe_name);
         // If next assert triggers, it means clientInvoke is being called from
         // the capnp event loop thread. This can happen when a ProxyServer
         // method implementation that runs synchronously on the event loop
@@ -680,13 +728,13 @@ void clientInvoke(ProxyClient& proxy_client, const GetRequest& get_request, Fiel
         // run asynchronously off the event loop thread. This is easy to fix by
         // just adding a 'context :Proxy.Context' argument to the capnp method
         // declaration so the server method runs in a dedicated thread.
-        assert(!g_thread_context.loop_thread);
-        g_thread_context.waiter = std::make_unique<Waiter>();
+        assert(!CurrentThread().loop_thread);
+        CurrentThread().waiter = std::make_unique<Waiter>();
         MP_LOGPLAIN(*proxy_client.m_context.loop, Log::Info)
-            << "{" << g_thread_context.thread_name
+            << "{" << CurrentThread().thread_name
             << "} IPC client first request from current thread, constructing waiter";
     }
-    ThreadContext& thread_context{g_thread_context};
+    ThreadContext& thread_context{CurrentThread()};
     std::optional<ClientInvokeContext> invoke_context; // Must outlive waiter->wait() call below
     std::exception_ptr exception;
     std::string kj_exception;
@@ -780,10 +828,11 @@ kj::Promise<void> serverInvoke(Server& server, CallContext& call_context, Fn fn)
     using Params = decltype(params);
     using Results = typename decltype(call_context.getResults())::Builds;
 
+    EventLoop& loop = *server.m_context.loop;
     int req = ++server_reqs;
-    MP_LOG(*server.m_context.loop, Log::Debug) << "IPC server recv request  #" << req << " "
-                                     << TypeName<typename Params::Reads>();
-    MP_LOG(*server.m_context.loop, Log::Trace) << "request data: "
+    MP_LOG(loop, Log::Debug) << "IPC server recv request  #" << req << " "
+        << TypeName<typename Params::Reads>();
+    MP_LOG(loop, Log::Trace) << "request data: "
         << LogEscape(params.toString(), server.m_context.loop->m_log_opts.max_chars);
 
     try {
@@ -799,16 +848,23 @@ kj::Promise<void> serverInvoke(Server& server, CallContext& call_context, Fn fn)
         // and waiting for it to complete.
         return ReplaceVoid([&]() { return fn.invoke(server_context, ArgList()); },
             [&]() { return kj::Promise<CallContext>(kj::mv(call_context)); })
-            .then([&server, req](CallContext call_context) {
-                MP_LOG(*server.m_context.loop, Log::Debug) << "IPC server send response #" << req << " " << TypeName<Results>();
-                MP_LOG(*server.m_context.loop, Log::Trace) << "response data: "
-                    << LogEscape(call_context.getResults().toString(), server.m_context.loop->m_log_opts.max_chars);
+            .then([&loop, req](CallContext call_context) {
+                MP_LOG(loop, Log::Debug) << "IPC server send response #" << req << " " << TypeName<Results>();
+                MP_LOG(loop, Log::Trace) << "response data: "
+                    << LogEscape(call_context.getResults().toString(), loop.m_log_opts.max_chars);
+            }).catch_([&loop, req](::kj::Exception&& e) -> kj::Promise<void> {
+                // Call failed for some reason. Cap'n Proto will try to send
+                // this error to the client as well, but it is good to log the
+                // failure early here and include the request number.
+                MP_LOG(loop, Log::Error) << "IPC server error request #" << req << " " << TypeName<Results>()
+                    << " " << kj::str("kj::Exception: ", e.getDescription()).cStr();
+                return kj::mv(e);
             });
     } catch (const std::exception& e) {
-        MP_LOG(*server.m_context.loop, Log::Error) << "IPC server unhandled exception: " << e.what();
+        MP_LOG(loop, Log::Error) << "IPC server unhandled exception: " << e.what();
         throw;
     } catch (...) {
-        MP_LOG(*server.m_context.loop, Log::Error) << "IPC server unhandled exception";
+        MP_LOG(loop, Log::Error) << "IPC server unhandled exception";
         throw;
     }
 }

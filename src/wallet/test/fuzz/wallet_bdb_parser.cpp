@@ -6,6 +6,7 @@
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
 #include <test/util/setup_common.h>
+#include <util/check.h>
 #include <util/fs.h>
 #include <util/time.h>
 #include <util/translation.h>
@@ -74,14 +75,15 @@ FUZZ_TARGET(wallet_bdb_parser, .init = initialize_wallet_bdb_parser)
             error.original == "Internal record position not in page" ||
             error.original == "LSNs are not reset, this database is not completely flushed. Please reopen then close the database with a version that has BDB support" ||
             error.original == "Records page has odd number of records" ||
-            error.original == "Bad overflow record page type") {
-            // Do nothing
-        } else if (error.original == "Subdatabase last page is greater than database last page" ||
-                   error.original == "Page number is greater than database last page" ||
-                   error.original == "Last page number could not fit in file" ||
-                   error.original == "Subdatabase has an unexpected name" ||
-                   error.original == "Unsupported BDB data file version number" ||
-                   error.original == "BDB builtin encryption is not supported") {
+            error.original == "Bad overflow record page type" ||
+            error.original == "BTree page has an unexpected level" ||
+            error.original == "BTree Leaf page is not at level 1" ||
+            error.original == "Subdatabase last page is greater than database last page" ||
+            error.original == "Page number is greater than database last page" ||
+            error.original == "Last page number could not fit in file" ||
+            error.original == "Subdatabase has an unexpected name" ||
+            error.original == "Unsupported BDB data file version number" ||
+            error.original == "BDB builtin encryption is not supported") {
         } else {
             throw std::runtime_error(error.original);
         }

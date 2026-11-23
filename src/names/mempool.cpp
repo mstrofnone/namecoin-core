@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2024 Daniel Kraft
+// Copyright (c) 2014-2026 Daniel Kraft
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -11,8 +11,6 @@
 #include <txmempool.h>
 #include <util/strencodings.h>
 #include <validation.h>
-
-/* ************************************************************************** */
 
 unsigned
 CNameMemPool::pendingChainLength (const valtype& name) const
@@ -228,7 +226,12 @@ CNameMemPool::removeExpireConflicts (const std::set<valtype>& expired)
       for (const auto& txid : txidsCopy)
         {
           const CTxMemPool::txiter mit2 = pool.mapTx.find (txid);
-          assert (mit2 != pool.mapTx.end ());
+
+          /* An earlier update in the chain may already have removed this
+             transaction recursively as a descendant.  */
+          if (mit2 == pool.mapTx.end ())
+            continue;
+
           pool.removeRecursive (mit2->GetTx (),
                                 MemPoolRemovalReason::NAME_CONFLICT);
         }
@@ -337,6 +340,42 @@ CNameMemPool::checkTx (const CTransaction& tx) const
              The main mempool logic takes care that updates are ordered
              properly and really a chain, as this is automatic due to the
              coloured-coin nature of names.  */
+          break;
+
+        default:
+          assert (false);
+        }
+    }
+
+  return true;
+}
+
+bool
+CNameMemPool::PackageChecker::checkTx (const CTransaction& tx)
+{
+  if (!tx.IsNamecoin ())
+    return true;
+
+  for (const auto& txout : tx.vout)
+    {
+      const CNameScript nameOp(txout.scriptPubKey);
+      if (!nameOp.isNameOp ())
+        continue;
+
+      switch (nameOp.getNameOp ())
+        {
+        case OP_NAME_NEW:
+          if (!nameNews.insert (nameOp.getOpHash ()).second)
+            return false;
+          break;
+
+        case OP_NAME_FIRSTUPDATE:
+          if (!nameRegs.insert (nameOp.getOpName ()).second)
+            return false;
+          break;
+
+        case OP_NAME_UPDATE:
+          /* Multiple updates of the same name are perfectly fine.  */
           break;
 
         default:

@@ -97,6 +97,7 @@ ForEachMacros:
   - BOOST_FOREACH
 IfMacros:
   - KJ_IF_MAYBE
+  - LIMITED_WHILE
 IncludeBlocks:   Regroup
 IncludeCategories:
   - Regex:           '^<bitcoin-build-config\.h>'
@@ -212,7 +213,7 @@ SpacesInLineCommentPrefix:
   Maximum:         -1
 SpacesInParentheses: false
 SpacesInSquareBrackets: false
-Standard:        c++20
+Standard:        Latest
 StatementAttributeLikeMacros:
   - Q_EMIT
 StatementMacros:

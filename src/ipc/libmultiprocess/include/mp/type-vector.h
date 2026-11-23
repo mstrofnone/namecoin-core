@@ -9,62 +9,38 @@
 #include <mp/util.h>
 
 namespace mp {
-template <typename LocalType, typename Value, typename Output>
-void CustomBuildField(TypeList<std::vector<LocalType>>,
+template <typename LocalType, typename Allocator, typename Value, typename Output>
+void CustomBuildField(TypeList<std::vector<LocalType, Allocator>>,
     Priority<1>,
     InvokeContext& invoke_context,
     Value&& value,
     Output&& output)
 {
-    // FIXME dedup with set handler below
-    auto list = output.init(value.size());
-    size_t i = 0;
-    for (auto it = value.begin(); it != value.end(); ++it, ++i) {
-        BuildField(TypeList<LocalType>(), invoke_context, ListOutput<typename decltype(list)::Builds>(list, i), *it);
-    }
+    BuildList(TypeList<LocalType>(), invoke_context, output, value);
 }
 
-inline static bool BuildPrimitive(InvokeContext& invoke_context, std::vector<bool>::const_reference value, TypeList<bool>)
+inline static bool BuildPrimitive(InvokeContext&, std::vector<bool>::const_reference value, TypeList<bool>)
 {
     return value;
 }
 
-template <typename LocalType, typename Input, typename ReadDest>
-decltype(auto) CustomReadField(TypeList<std::vector<LocalType>>,
+template <typename LocalType, typename Allocator, typename Input, typename ReadDest>
+decltype(auto) CustomReadField(TypeList<std::vector<LocalType, Allocator>>,
     Priority<1>,
     InvokeContext& invoke_context,
     Input&& input,
     ReadDest&& read_dest)
 {
-    return read_dest.update([&](auto& value) {
-        auto data = input.get();
-        value.clear();
-        value.reserve(data.size());
-        for (auto item : data) {
-            ReadField(TypeList<LocalType>(), invoke_context, Make<ValueField>(item),
-                ReadDestEmplace(TypeList<LocalType>(), [&](auto&&... args) -> auto& {
-                    value.emplace_back(std::forward<decltype(args)>(args)...);
-                    return value.back();
-                }));
-        }
-    });
-}
-
-template <typename Input, typename ReadDest>
-decltype(auto) CustomReadField(TypeList<std::vector<bool>>,
-                               Priority<1>,
-                               InvokeContext& invoke_context,
-                               Input&& input,
-                               ReadDest&& read_dest)
-{
-    return read_dest.update([&](auto& value) {
-        auto data = input.get();
-        value.clear();
-        value.reserve(data.size());
-        for (auto item : data) {
-            value.push_back(ReadField(TypeList<bool>(), invoke_context, Make<ValueField>(item), ReadDestTemp<bool>()));
-        }
-    });
+    return ReadList(
+        TypeList<LocalType>(), invoke_context, input, read_dest,
+        [&](auto& value, size_t size) {
+            value.clear();
+            value.reserve(size);
+        },
+        [&](auto& value, auto&&... args) -> decltype(auto) {
+            value.emplace_back(std::forward<decltype(args)>(args)...);
+            return value.back();
+        });
 }
 } // namespace mp
 

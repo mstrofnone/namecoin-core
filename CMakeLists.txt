@@ -27,7 +27,7 @@ get_directory_property(precious_variables CACHE_VARIABLES)
 # Project / Package metadata
 #=============================
 set(CLIENT_NAME "Namecoin Core")
-set(CLIENT_VERSION_MAJOR 31)
+set(CLIENT_VERSION_MAJOR 32)
 set(CLIENT_VERSION_MINOR 99)
 set(CLIENT_VERSION_BUILD 0)
 set(CLIENT_VERSION_RC 0)
@@ -80,6 +80,7 @@ if(CMAKE_VERSION VERSION_LESS 4.2 AND CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND NO
   set(CMAKE_INSTALL_NAME_TOOL "${CMAKE_COMMAND} -E true")
 endif()
 enable_language(CXX)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -107,83 +108,32 @@ option(BUILD_CLI "Build namecoin-cli executable." ON)
 option(BUILD_TESTS "Build test_namecoin and other unit test executables." ON)
 option(BUILD_TX "Build namecoin-tx executable." ${BUILD_TESTS})
 option(BUILD_UTIL "Build namecoin-util executable." ${BUILD_TESTS})
+cmake_dependent_option(BUILD_GUI_TESTS "Build test_namecoin-qt executable." ON "BUILD_GUI;BUILD_TESTS" OFF)
 
 option(BUILD_UTIL_CHAINSTATE "Build experimental namecoin-chainstate executable." OFF)
 option(BUILD_KERNEL_LIB "Build experimental namecoinkernel library." ${BUILD_UTIL_CHAINSTATE})
 cmake_dependent_option(BUILD_KERNEL_TEST "Build tests for the experimental namecoinkernel library." ON "BUILD_KERNEL_LIB" OFF)
 
 option(ENABLE_WALLET "Enable wallet." ON)
-if(ENABLE_WALLET)
-  if(VCPKG_TARGET_TRIPLET)
-    # Use of the `unofficial::` namespace is a vcpkg package manager convention.
-    find_package(unofficial-sqlite3 CONFIG REQUIRED)
-    add_library(SQLite3::SQLite3 ALIAS unofficial::sqlite3::sqlite3)
-  else()
-    find_package(SQLite3 3.7.17 REQUIRED)
-    if(NOT TARGET SQLite3::SQLite3) # CMake < 4.3
-      add_library(SQLite3::SQLite3 ALIAS SQLite::SQLite3)
-    endif()
-  endif()
-endif()
 cmake_dependent_option(BUILD_WALLET_TOOL "Build namecoin-wallet tool." ${BUILD_TESTS} "ENABLE_WALLET" OFF)
 
-option(REDUCE_EXPORTS "Attempt to reduce exported symbols in the resulting executables." OFF)
-option(CMAKE_COMPILE_WARNING_AS_ERROR "Treat compiler warnings as errors." OFF)
-option(WITH_CCACHE "Attempt to use ccache for compiling." ON)
-
-option(WITH_ZMQ "Enable ZMQ notifications." OFF)
-if(WITH_ZMQ)
-  find_package(ZeroMQ 4.0.0 MODULE REQUIRED)
-endif()
-
-option(WITH_EMBEDDED_ASMAP "Embed default ASMap data." ON)
-
-option(WITH_USDT "Enable tracepoints for Userspace, Statically Defined Tracing." OFF)
-if(WITH_USDT)
-  find_package(USDT MODULE REQUIRED)
-endif()
-
 option(ENABLE_EXTERNAL_SIGNER "Enable external signer support." ON)
-
-cmake_dependent_option(WITH_QRENCODE "Enable QR code support." ON "BUILD_GUI" OFF)
-if(WITH_QRENCODE)
-  find_package(QRencode MODULE REQUIRED)
-  set(USE_QRCODE TRUE)
-endif()
-
-cmake_dependent_option(WITH_DBUS "Enable DBus support." ON "NOT CMAKE_SYSTEM_NAME MATCHES \"(Windows|Darwin)\" AND BUILD_GUI" OFF)
-
+option(WITH_ZMQ "Enable ZMQ notifications." OFF)
 cmake_dependent_option(ENABLE_IPC "Build multiprocess namecoin-node and namecoin-gui executables in addition to monolithic namecoind and namecoin-qt executables." ON "NOT WIN32" OFF)
 cmake_dependent_option(WITH_EXTERNAL_LIBMULTIPROCESS "Build with external libmultiprocess library instead of with local git subtree when ENABLE_IPC is enabled. This is not normally recommended, but can be useful for developing libmultiprocess itself." OFF "ENABLE_IPC" OFF)
-if(ENABLE_IPC AND WITH_EXTERNAL_LIBMULTIPROCESS)
-  find_package(Libmultiprocess REQUIRED COMPONENTS Lib)
-  find_package(LibmultiprocessNative REQUIRED COMPONENTS Bin
-    NAMES Libmultiprocess
-  )
-endif()
+option(WITH_EMBEDDED_ASMAP "Embed default ASMap data." ON)
+option(WITH_USDT "Enable tracepoints for Userspace, Statically Defined Tracing." OFF)
 
-cmake_dependent_option(BUILD_GUI_TESTS "Build test_namecoin-qt executable." ON "BUILD_GUI;BUILD_TESTS" OFF)
-if(BUILD_GUI)
-  set(qt_components Core Gui Widgets LinguistTools)
-  if(ENABLE_WALLET)
-    list(APPEND qt_components Network)
-  endif()
-  if(WITH_DBUS)
-    list(APPEND qt_components DBus)
-    set(USE_DBUS TRUE)
-  endif()
-  if(BUILD_GUI_TESTS)
-    list(APPEND qt_components Test)
-  endif()
-  find_package(Qt 6.2 MODULE REQUIRED
-    COMPONENTS ${qt_components}
-  )
-  unset(qt_components)
-endif()
+cmake_dependent_option(WITH_QRENCODE "Enable QR code support." ON "BUILD_GUI" OFF)
+cmake_dependent_option(WITH_DBUS "Enable DBus support." ON "NOT CMAKE_SYSTEM_NAME MATCHES \"(Windows|Darwin)\" AND BUILD_GUI" OFF)
 
 option(BUILD_BENCH "Build bench_namecoin executable." OFF)
 option(BUILD_FUZZ_BINARY "Build fuzz binary." OFF)
 option(BUILD_FOR_FUZZING "Build for fuzzing. Enabling this will disable all other targets and override BUILD_FUZZ_BINARY." OFF)
+
+option(REDUCE_EXPORTS "Attempt to reduce exported symbols in the resulting executables." OFF)
+option(CMAKE_COMPILE_WARNING_AS_ERROR "Treat compiler warnings as errors." OFF)
+option(WITH_CCACHE "Attempt to use ccache for compiling." ON)
 
 option(INSTALL_MAN "Install man pages." ON)
 
@@ -197,11 +147,13 @@ string(APPEND CMAKE_CXX_COMPILE_OBJECT " ${APPEND_CPPFLAGS} ${APPEND_CXXFLAGS}")
 string(APPEND CMAKE_CXX_CREATE_SHARED_LIBRARY " ${APPEND_LDFLAGS}")
 string(APPEND CMAKE_CXX_LINK_EXECUTABLE " ${APPEND_LDFLAGS}")
 
-set(configure_warnings)
+# Check required C++ toolchain features early.
+include(CheckCXXFeatures)
+check_cxx_features()
 
-include(CheckLinkerSupportsPIE)
-check_linker_supports_pie(configure_warnings)
-
+#=============================
+# Core interface library
+#=============================
 # The core_interface library aims to encapsulate common build flags.
 # It is a usage requirement for all targets except for secp256k1, which
 # gets its flags by other means.
@@ -213,6 +165,15 @@ target_link_libraries(core_interface INTERFACE
   $<$<CONFIG:Debug>:core_interface_debug>
 )
 
+#=============================
+# Option interaction
+#=============================
+# Compute the final state of build options.
+# This must be done after all options have been initially set,
+# as some options (e.g., BUILD_FOR_FUZZING) may override or adjust others.
+# It must also come before any dependency checks to ensure that the set
+# of dependencies checked is consistent with the final option values,
+# that is, that all required, and only the required, dependencies are tested.
 if(BUILD_FOR_FUZZING)
   message(WARNING "BUILD_FOR_FUZZING=ON will disable all other targets and force BUILD_FUZZ_BINARY=ON.")
   set(BUILD_BITCOIN_BIN OFF)
@@ -231,12 +192,88 @@ if(BUILD_FOR_FUZZING)
   set(BUILD_TESTS OFF)
   set(BUILD_GUI_TESTS OFF)
   set(BUILD_BENCH OFF)
-  set(ENABLE_IPC OFF)
   set(BUILD_FUZZ_BINARY ON)
 
   target_compile_definitions(core_interface INTERFACE
     FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
   )
+endif()
+
+#=============================
+# Check and set PIC/PIE
+#=============================
+set(configure_warnings)
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Generic")
+include(CheckLinkerSupportsPIE)
+# Set CMAKE_POSITION_INDEPENDENT_CODE early so it applies to all
+# subsequent checks, including dependency packages and tool flags.
+check_linker_supports_pie(configure_warnings)
+endif()
+
+#=============================
+# Find dependencies
+#=============================
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Generic")
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+target_link_libraries(core_interface INTERFACE
+  Threads::Threads
+)
+endif()
+
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Generic")
+include(AddBoostIfNeeded)
+add_boost_if_needed()
+endif()
+
+if(ENABLE_WALLET)
+  if(VCPKG_TARGET_TRIPLET)
+    # Use of the `unofficial::` namespace is a vcpkg package manager convention.
+    find_package(unofficial-sqlite3 CONFIG REQUIRED)
+    add_library(SQLite3::SQLite3 ALIAS unofficial::sqlite3::sqlite3)
+  else()
+    find_package(SQLite3 3.7.17 REQUIRED)
+    if(NOT TARGET SQLite3::SQLite3) # CMake < 4.3
+      add_library(SQLite3::SQLite3 ALIAS SQLite::SQLite3)
+    endif()
+  endif()
+endif()
+
+if(WITH_ZMQ)
+  find_package(ZeroMQ 4.0.0 MODULE REQUIRED)
+endif()
+
+if(ENABLE_IPC AND WITH_EXTERNAL_LIBMULTIPROCESS)
+  find_package(Libmultiprocess REQUIRED COMPONENTS Lib)
+  find_package(LibmultiprocessNative REQUIRED COMPONENTS Bin
+    NAMES Libmultiprocess
+  )
+endif()
+
+if(WITH_USDT)
+  find_package(USDT MODULE REQUIRED)
+endif()
+
+if(BUILD_GUI)
+  set(qt_components Core Gui Widgets LinguistTools)
+  if(ENABLE_WALLET)
+    list(APPEND qt_components Network)
+  endif()
+  if(WITH_DBUS)
+    list(APPEND qt_components DBus)
+    set(USE_DBUS TRUE)
+  endif()
+  if(BUILD_GUI_TESTS)
+    list(APPEND qt_components Test)
+  endif()
+  find_package(Qt 6.2 MODULE REQUIRED
+    COMPONENTS ${qt_components}
+  )
+  unset(qt_components)
+  if(WITH_QRENCODE)
+    find_package(QRencode MODULE REQUIRED)
+    set(USE_QRCODE TRUE)
+  endif()
 endif()
 
 include(TryAppendCXXFlags)
@@ -253,19 +290,20 @@ target_compile_definitions(core_interface_debug INTERFACE
 
 if(WIN32)
   #[=[
-  This build system supports two ways to build binaries for Windows.
+  This build system supports two ways to build binaries for Windows:
 
-  1. Building on Windows using MSVC.
-  Implementation notes:
-  - /DWIN32 and /D_WINDOWS definitions are included into the CMAKE_CXX_FLAGS_INIT
-    and CMAKE_CXX_FLAGS_INIT variables by default.
-  - A run-time library is selected using the CMAKE_MSVC_RUNTIME_LIBRARY variable.
-  - MSVC-specific options, for example, /Zc:__cplusplus, are additionally required.
+  1. Building on Windows using clang-cl.exe, which is compatible with MSVC’s cl.exe.
+     This case is handled when the MSVC variable is true.
+     Implementation notes:
+     - /DWIN32 and /D_WINDOWS definitions are included in the CMAKE_C_FLAGS_INIT
+       and CMAKE_CXX_FLAGS_INIT variables by default.
+     - The run-time library is selected using the CMAKE_MSVC_RUNTIME_LIBRARY variable.
 
   2. Cross-compiling using MinGW.
-  Implementation notes:
-  - WIN32 and _WINDOWS definitions must be provided explicitly.
-  - A run-time library must be specified explicitly using _MT definition.
+     This case is handled when the MINGW variable is true.
+     Implementation notes:
+     - WIN32 and _WINDOWS definitions must be provided explicitly.
+     - The run-time library must be configured explicitly via the _MT definition.
   ]=]
 
   target_compile_definitions(core_interface INTERFACE
@@ -287,16 +325,21 @@ if(WIN32)
     target_compile_definitions(core_interface INTERFACE
       _UNICODE;UNICODE
     )
-    target_compile_options(core_interface INTERFACE
-      /utf-8
-      /Zc:preprocessor
-      /Zc:__cplusplus
-      /sdl
+
+    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64")
+      set(system_arch_suffix x86_64)
+    elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64")
+      set(system_arch_suffix aarch64)
+    else()
+      message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    # __int128 division when using clang-cl requires the builtins library.
+    # See https://clang.llvm.org/docs/UsersManual.html#finding-clang-runtime-libraries.
+    target_link_libraries(core_interface INTERFACE
+      clang_rt.builtins-${system_arch_suffix}
     )
-    target_link_options(core_interface INTERFACE
-      # We embed our own manifests.
-      /MANIFEST:NO
-    )
+    unset(system_arch_suffix)
+
     # Improve parallelism in MSBuild.
     # See: https://devblogs.microsoft.com/cppblog/improved-parallelism-in-msbuild/.
     list(APPEND CMAKE_VS_GLOBALS "UseMultiToolTask=true")
@@ -317,14 +360,10 @@ if(WIN32)
     # As a best effort, target Windows 8.
     try_append_linker_flag("-Wl,--major-subsystem-version,6" TARGET core_interface)
     try_append_linker_flag("-Wl,--minor-subsystem-version,2" TARGET core_interface)
-  endif()
 
-  # Workaround producing large object files, which cannot be handled by the assembler.
-  # More likely to happen with no, or lower levels of optimisation.
-  # See discussion in https://github.com/bitcoin/bitcoin/issues/28109.
-  if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-    try_append_cxx_flags("/bigobj" TARGET core_interface_debug SKIP_LINK)
-  else()
+    # Workaround for large object files, which cannot be handled by the assembler.
+    # More likely to happen with no, or lower levels of optimisation.
+    # See discussion in https://github.com/bitcoin/bitcoin/issues/28109.
     try_append_cxx_flags("-Wa,-mbig-obj" TARGET core_interface_debug SKIP_LINK)
   endif()
 endif()
@@ -338,7 +377,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SIZEOF_VOID_P EQUAL 4)
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-  target_compile_definitions(core_interface INTERFACE OBJC_OLD_DISPATCH_PROTOTYPES=0)
   # These flags are specific to ld64, and may cause issues with other linkers.
   # For example: GNU ld will interpret -dead_strip as -de and then try and use
   # "ad_strip" as the symbol for the entry point.
@@ -348,12 +386,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     try_append_linker_flag("-Wl,-headerpad_max_install_names" TARGET core_interface)
   endif()
 endif()
-
-set(THREADS_PREFER_PTHREAD_FLAG ON)
-find_package(Threads REQUIRED)
-target_link_libraries(core_interface INTERFACE
-  Threads::Threads
-)
 
 # Define sanitize_interface with -fsanitize flags intended to apply to all
 # libraries and executables.
@@ -393,7 +425,8 @@ if(SANITIZERS)
     SOURCE "
       #include <cstdint>
       #include <cstddef>
-      extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) { return 0; }
+      extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t*, size_t);
+      extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t*, size_t) { return 0; }
       int main() { return 0; }
     "
     RESULT_VAR linker_supports_sanitizers
@@ -413,7 +446,8 @@ if(BUILD_FUZZ_BINARY)
   check_cxx_source_compiles_with_flags("
       #include <cstdint>
       #include <cstddef>
-      extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) { return 0; }
+      extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t*, size_t);
+      extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t*, size_t) { return 0; }
       // No main() function.
     " FUZZ_BINARY_LINKS_WITHOUT_MAIN_FUNCTION
     LDFLAGS ${SANITIZER_LDFLAGS} ${fuzz_flag}
@@ -424,13 +458,6 @@ if(BUILD_FUZZ_BINARY)
   target_link_libraries(fuzzer_interface INTERFACE ${FUZZ_LIBS})
 endif()
 
-include(AddBoostIfNeeded)
-add_boost_if_needed()
-
-if(BUILD_DAEMON OR BUILD_GUI OR BUILD_CLI OR BUILD_TESTS OR BUILD_BENCH OR BUILD_FUZZ_BINARY)
-  find_package(Libevent 2.1.8 MODULE REQUIRED)
-endif()
-
 include(cmake/introspection.cmake)
 
 include(cmake/ccache.cmake)
@@ -438,54 +465,63 @@ include(cmake/ccache.cmake)
 add_library(warn_interface INTERFACE)
 target_link_libraries(core_interface INTERFACE warn_interface)
 if(MSVC)
-  try_append_cxx_flags("/W3" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("/wd4018" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("/wd4146" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("/wd4244" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("/wd4267" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("/wd4715" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("/wd4805" TARGET warn_interface SKIP_LINK)
+  # clang-cl maps some options to Clang's internal options as follows:
+  #   /W1 or /W2 or /W3 --> -Wall
+  #   /W4 --> -Wall and -Wextra
+  #   /Wall --> -Weverything
+  # See https://clang.llvm.org/docs/UsersManual.html.
+  try_append_cxx_flags("/W3" TARGET warn_interface SKIP_LINK)  # Enables Clang's internal -Wall option.
   target_compile_definitions(warn_interface INTERFACE
     _CRT_SECURE_NO_WARNINGS
-    _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
   )
 else()
   try_append_cxx_flags("-Wall" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wextra" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wgnu" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wcovered-switch-default" TARGET warn_interface SKIP_LINK)
-  # Some compilers will ignore -Wformat-security without -Wformat, so just combine the two here.
-  try_append_cxx_flags("-Wformat -Wformat-security" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wvla" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wshadow-field" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wthread-safety" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wthread-safety-pointer" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wloop-analysis" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wredundant-decls" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wunused-member-function" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wdate-time" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wconditional-uninitialized" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wduplicated-branches" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wduplicated-cond" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wlogical-op" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Woverloaded-virtual" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wsuggest-override" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wimplicit-fallthrough" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wunreachable-code" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wdocumentation" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wself-assign" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wbidi-chars=any" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wundef" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wleading-whitespace=spaces" TARGET warn_interface SKIP_LINK)
-  try_append_cxx_flags("-Wtrailing-whitespace=any" TARGET warn_interface SKIP_LINK)
-
-  # Some compilers (gcc) ignore unknown -Wno-* options, but warn about all
-  # unknown options if any other warning is produced. Test the -Wfoo case, and
-  # set the -Wno-foo case if it works.
-  try_append_cxx_flags("-Wunused-parameter" TARGET warn_interface SKIP_LINK
-    IF_CHECK_PASSED "-Wno-unused-parameter"
-  )
 endif()
+try_append_cxx_flags("-Wextra" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wgnu" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wcovered-switch-default" TARGET warn_interface SKIP_LINK)
+# Some compilers will ignore -Wformat-security without -Wformat, so just combine the two here.
+try_append_cxx_flags("-Wformat -Wformat-security" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wvla" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wshadow-field" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wthread-safety" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wthread-safety-pointer" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wloop-analysis" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wredundant-decls" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wunused-const-variable" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wunused-exception-parameter" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wunused-macros" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wunused-member-function" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wunused-template" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wdate-time" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wconditional-uninitialized" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wduplicated-branches" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wduplicated-cond" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wlogical-op" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Woverloaded-virtual" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wsuggest-override" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wimplicit-fallthrough" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wunreachable-code-aggressive" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wdocumentation" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wself-assign" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wbidi-chars=any" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wundef" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wleading-whitespace=spaces" TARGET warn_interface SKIP_LINK)
+try_append_cxx_flags("-Wtrailing-whitespace=any" TARGET warn_interface SKIP_LINK)
+
+# Some compilers (gcc) ignore unknown -Wno-* options, but warn about all
+# unknown options if any other warning is produced. Test the -Wfoo case, and
+# set the -Wno-foo case if it works.
+try_append_cxx_flags("-Wunused-parameter" TARGET warn_interface SKIP_LINK
+  IF_CHECK_PASSED "-Wno-unused-parameter"
+)
+# Lambda attributes (e.g. [[noreturn]]) before the parameter list are a C++23
+# extension intentionally used in C++20 builds for compatibility with
+# -Wmissing-noreturn. Suppress the extension warning rather than removing the
+# attributes or working around them.
+try_append_cxx_flags("-Wc++23-lambda-attributes" TARGET warn_interface SKIP_LINK
+  IF_CHECK_PASSED "-Wno-c++23-lambda-attributes"
+)
 
 configure_file(cmake/script/Coverage.cmake Coverage.cmake USE_SOURCE_PERMISSIONS COPYONLY)
 configure_file(cmake/script/CoverageFuzz.cmake CoverageFuzz.cmake USE_SOURCE_PERMISSIONS COPYONLY)
@@ -577,6 +613,7 @@ endif()
 
 if(REDUCE_EXPORTS)
   set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+  set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
   try_append_linker_flag("-Wl,--exclude-libs,ALL" TARGET core_interface)
   try_append_linker_flag("-Wl,-no_exported_symbols" VAR CMAKE_EXE_LINKER_FLAGS)
 endif()
@@ -679,6 +716,12 @@ message("  fuzz binary ......................... ${BUILD_FUZZ_BINARY}")
 message("")
 if(CMAKE_CROSSCOMPILING)
   set(cross_status "TRUE, for ${CMAKE_SYSTEM_NAME}, ${CMAKE_SYSTEM_PROCESSOR}")
+  if(MINGW)
+    include(GetMingwVersion)
+    get_mingw_version(_mingw_version)
+    set(cross_status "${cross_status}, using MinGW-w64 ${_mingw_version}")
+    unset(_mingw_version)
+  endif()
 else()
   set(cross_status "FALSE")
 endif()

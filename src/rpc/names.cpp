@@ -349,19 +349,25 @@ constexpr bool optional = true;
 
 } // anonymous namespace
 
-const RPCResult NameOpResult{RPCResult::Type::OBJ, "nameOp", optional,
-    "The encoded name-operation (if the script has one)",
-    {
-      {RPCResult::Type::STR, "op", "The type of operation"},
-      {RPCResult::Type::STR_HEX, "hash", optional, "Hash value for name_new"},
-      {RPCResult::Type::STR_HEX, "rand", optional, "Seed value for name_firstupdate"},
-      {RPCResult::Type::STR, "name", optional, "Name for updates"},
-      {RPCResult::Type::STR, "name_error", optional, "Encoding error for the name, if any"},
-      {RPCResult::Type::STR, "name_encoding", optional, "Encoding of the name"},
-      {RPCResult::Type::STR, "value", optional, "Value for updates"},
-      {RPCResult::Type::STR, "value_error", optional, "Encoding error for the value, if any"},
-      {RPCResult::Type::STR, "value_encoding", optional, "Encoding of the value"},
-    }};
+const RPCResult&
+NameOpResult ()
+{
+  static const RPCResult result{RPCResult::Type::OBJ, "nameOp", optional,
+      "The encoded name-operation (if the script has one)",
+      {
+        {RPCResult::Type::STR, "op", "The type of operation"},
+        {RPCResult::Type::STR_HEX, "hash", optional, "Hash value for name_new"},
+        {RPCResult::Type::STR_HEX, "rand", optional, "Seed value for name_firstupdate"},
+        {RPCResult::Type::STR, "name", optional, "Name for updates"},
+        {RPCResult::Type::STR, "name_error", optional, "Encoding error for the name, if any"},
+        {RPCResult::Type::STR, "name_encoding", optional, "Encoding of the name"},
+        {RPCResult::Type::STR, "value", optional, "Value for updates"},
+        {RPCResult::Type::STR, "value_error", optional, "Encoding error for the value, if any"},
+        {RPCResult::Type::STR, "value_encoding", optional, "Encoding of the value"},
+      }};
+
+  return result;
+}
 
 /* ************************************************************************** */
 
@@ -1021,7 +1027,7 @@ namerawtransaction ()
           HelpExampleCli ("namerawtransaction", R"("raw tx hex" 1 "{\"op\":\"name_new\",\"name\":\"my-name\")")
         + HelpExampleCli ("namerawtransaction", R"("raw tx hex" 1 "{\"op\":\"name_firstupdate\",\"name\":\"my-name\",\"value\":\"new value\",\"rand\":\"00112233\")")
         + HelpExampleCli ("namerawtransaction", R"("raw tx hex" 1 "{\"op\":\"name_update\",\"name\":\"my-name\",\"value\":\"new value\")")
-        + HelpExampleRpc ("namerawtransaction", R"("raw tx hex", 1, "{\"op\":\"name_update\",\"name\":\"my-name\",\"value\":\"new value\")")
+        + HelpExampleRpc ("namerawtransaction", R"("raw tx hex", 1, {"op":"name_update","name":"my-name","value":"new value"})")
       },
       [&] (const RPCMethod& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -1068,23 +1074,27 @@ namepsbt ()
           HelpExampleCli ("namepsbt", R"("psbt" 1 "{\"op\":\"name_new\",\"name\":\"my-name\")")
         + HelpExampleCli ("namepsbt", R"("psbt" 1 "{\"op\":\"name_firstupdate\",\"name\":\"my-name\",\"value\":\"new value\",\"rand\":\"00112233\")")
         + HelpExampleCli ("namepsbt", R"("psbt" 1 "{\"op\":\"name_update\",\"name\":\"my-name\",\"value\":\"new value\")")
-        + HelpExampleRpc ("namepsbt", R"("psbt", 1, "{\"op\":\"name_update\",\"name\":\"my-name\",\"value\":\"new value\")")
+        + HelpExampleRpc ("namepsbt", R"("psbt", 1, {"op":"name_update","name":"my-name","value":"new value"})")
       },
       [&] (const RPCMethod& self, const JSONRPCRequest& request) -> UniValue
 {
-  PartiallySignedTransaction psbtx;
-  std::string error;
-  if (!DecodeBase64PSBT (psbtx, request.params[0].get_str (), error))
+  util::Result<PartiallySignedTransaction> psbt_res
+      = DecodeBase64PSBT (request.params[0].get_str ());
+  if (!psbt_res)
     throw JSONRPCError (RPC_DESERIALIZATION_ERROR,
-                        strprintf ("TX decode failed %s", error));
+                        strprintf ("TX decode failed %s",
+                        util::ErrorString(psbt_res).original));
+  const PartiallySignedTransaction psbtx = *psbt_res;
 
   UniValue result(UniValue::VOBJ);
 
+  CMutableTransaction mtx = *CHECK_NONFATAL (psbtx.GetUnsignedTx ());
   PerformNameRawtx (request.params[1].getInt<int> (),
-                    request.params[2].get_obj (), *psbtx.tx, result);
+                    request.params[2].get_obj (), mtx, result);
+  const PartiallySignedTransaction psbt2(mtx, psbtx.GetVersion ());
 
   DataStream ssTx;
-  ssTx << psbtx;
+  ssTx << psbt2;
   result.pushKV ("psbt", EncodeBase64 (MakeUCharSpan (ssTx)));
 
   return result;

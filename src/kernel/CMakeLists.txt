@@ -30,7 +30,6 @@ add_library(namecoinkernel
   ../deploymentstatus.cpp
   ../flatfile.cpp
   ../hash.cpp
-  ../logging.cpp
   ../names/common.cpp
   ../names/encoding.cpp
   ../names/main.cpp
@@ -66,6 +65,7 @@ add_library(namecoinkernel
   ../uint256.cpp
   ../util/chaintype.cpp
   ../util/check.cpp
+  ../util/exception.cpp
   ../util/expected.cpp
   ../util/feefrac.cpp
   ../util/fs.cpp
@@ -75,6 +75,7 @@ add_library(namecoinkernel
   ../util/rbf.cpp
   ../util/signalinterrupt.cpp
   ../util/syserror.cpp
+  ../util/thread.cpp
   ../util/threadnames.cpp
   ../util/time.cpp
   ../util/tokenpipe.cpp
@@ -91,9 +92,7 @@ add_library(namecoinkernel
 # These can be more strict and/or warnings that only apply to shared
 # libs.
 add_library(kernel_warn_interface INTERFACE)
-if(NOT MSVC)
-  try_append_cxx_flags("-Wunique-object-duplication" TARGET kernel_warn_interface SKIP_LINK)
-endif()
+try_append_cxx_flags("-Wunique-object-duplication" TARGET kernel_warn_interface SKIP_LINK)
 
 # Also manually apply the warnings to the kernel's internal dependencies
 target_link_libraries(bitcoin_clientversion PRIVATE kernel_warn_interface)

@@ -70,7 +70,7 @@ static CAmount GetReceived(const CWallet& wallet, const UniValue& params, bool b
             continue;
         }
 
-        for (const CTxOut& txout : wtx.tx->vout) {
+        for (const CTxOut& txout : wtx.GetTx()->vout) {
             if (output_scripts.contains(txout.scriptPubKey)) {
                 amount += txout.nValue;
             }
@@ -173,7 +173,8 @@ RPCMethod getbalance()
                 "The available balance is what the wallet considers currently spendable, and is\n"
                 "thus affected by options which limit spendability such as -spendzeroconfchange.\n",
                 {
-                    {"dummy", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Remains for backward compatibility. Must be excluded or set to \"*\"."},
+                    {"dummy", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Remains for backward compatibility. Must be excluded or set to \"*\".",
+                        RPCArgOptions{.placeholder = true}},
                     {"minconf", RPCArg::Type::NUM, RPCArg::Default{0}, "Only include transactions confirmed at least this many times."},
                     {"include_watchonly", RPCArg::Type::BOOL, RPCArg::Default{false}, "No longer used"},
                     {"avoid_reuse", RPCArg::Type::BOOL, RPCArg::Default{true}, "(only available if avoid_reuse wallet flag is set) Do not include balance in dirty outputs; addresses are considered dirty if they have previously been used in a transaction."},
@@ -272,7 +273,7 @@ RPCMethod lockunspent()
 
     bool fUnlock = request.params[0].get_bool();
 
-    const bool persistent{request.params[2].isNull() ? false : request.params[2].get_bool()};
+    const bool persistent{self.Arg<bool>("persistent")};
 
     if (request.params[1].isNull()) {
         if (fUnlock) {
@@ -313,7 +314,7 @@ RPCMethod lockunspent()
 
         const CWalletTx& trans = it->second;
 
-        if (outpt.n >= trans.tx->vout.size()) {
+        if (outpt.n >= trans.GetTx()->vout.size()) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, vout index out of bounds");
         }
 
@@ -457,6 +458,23 @@ RPCMethod getbalances()
     };
 }
 
+const UniValue* GetOptionWithAlias(
+    const UniValue& options,
+    const std::string& canonical_name,
+    const std::string& deprecated_name)
+{
+    if (options.exists(canonical_name) && options.exists(deprecated_name)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Use " + canonical_name + " (" + deprecated_name + " is deprecated). Do not set both.");
+    }
+    if (options.exists(deprecated_name)) {
+        return &options[deprecated_name];
+    }
+    if (options.exists(canonical_name)) {
+        return &options[canonical_name];
+    }
+    return nullptr;
+}
+
 RPCMethod listunspent()
 {
     return RPCMethod{
@@ -476,12 +494,12 @@ RPCMethod listunspent()
                               "See description of \"safe\" attribute below."},
                     {"query_options", RPCArg::Type::OBJ_NAMED_PARAMS, RPCArg::Optional::OMITTED, "",
                         {
-                            {"minimumAmount", RPCArg::Type::AMOUNT, RPCArg::Default{FormatMoney(0)}, "Minimum value of each UTXO in " + CURRENCY_UNIT + ""},
-                            {"maximumAmount", RPCArg::Type::AMOUNT, RPCArg::DefaultHint{"unlimited"}, "Maximum value of each UTXO in " + CURRENCY_UNIT + ""},
-                            {"maximumCount", RPCArg::Type::NUM, RPCArg::DefaultHint{"unlimited"}, "Maximum number of UTXOs"},
-                            {"minimumSumAmount", RPCArg::Type::AMOUNT, RPCArg::DefaultHint{"unlimited"}, "Minimum sum value of all UTXOs in " + CURRENCY_UNIT + ""},
+                            {"minimum_amount|minimumAmount", RPCArg::Type::AMOUNT, RPCArg::Default{FormatMoney(0)}, "Minimum value of each UTXO in " + CURRENCY_UNIT + ""},
+                            {"maximum_amount|maximumAmount", RPCArg::Type::AMOUNT, RPCArg::DefaultHint{"unlimited"}, "Maximum value of each UTXO in " + CURRENCY_UNIT + ""},
+                            {"maximum_count|maximumCount", RPCArg::Type::NUM, RPCArg::DefaultHint{"unlimited"}, "Maximum number of UTXOs"},
+                            {"minimum_sum_amount|minimumSumAmount", RPCArg::Type::AMOUNT, RPCArg::DefaultHint{"unlimited"}, "Minimum sum value of all UTXOs in " + CURRENCY_UNIT + ""},
                             {"include_immature_coinbase", RPCArg::Type::BOOL, RPCArg::Default{false}, "Include immature coinbase UTXOs"},
-                            {"includeNames", RPCArg::Type::BOOL, RPCArg::DefaultHint{"false"}, "Include name outputs"},
+                            {"includeNames", RPCArg::Type::BOOL, RPCArg::Default{false}, "Include name outputs"},
                         },
                         RPCArgOptions{.oneline_description="query_options"}},
                 },
@@ -493,14 +511,14 @@ RPCMethod listunspent()
                             {RPCResult::Type::STR_HEX, "txid", "the transaction id"},
                             {RPCResult::Type::NUM, "vout", "the vout value"},
                             {RPCResult::Type::STR, "address", /*optional=*/true, "the address"},
-                            NameOpResult,
+                            NameOpResult(),
                             {RPCResult::Type::STR, "label", /*optional=*/true, "The associated label, or \"\" for the default label"},
-                            {RPCResult::Type::STR, "scriptPubKey", "the output script"},
+                            {RPCResult::Type::STR_HEX, "scriptPubKey", "the output script"},
                             {RPCResult::Type::STR_AMOUNT, "amount", "the transaction output amount in " + CURRENCY_UNIT},
                             {RPCResult::Type::NUM, "confirmations", "The number of confirmations"},
                             {RPCResult::Type::NUM, "ancestorcount", /*optional=*/true, "The number of in-mempool ancestor transactions, including this one (if transaction is in the mempool)"},
                             {RPCResult::Type::NUM, "ancestorsize", /*optional=*/true, "The virtual transaction size of in-mempool ancestors, including this one (if transaction is in the mempool)"},
-                            {RPCResult::Type::STR_AMOUNT, "ancestorfees", /*optional=*/true, "The total fees of in-mempool ancestors (including this one) with fee deltas used for mining priority in " + CURRENCY_ATOM + " (if transaction is in the mempool)"},
+                            {RPCResult::Type::NUM, "ancestorfees", /*optional=*/true, "The total fees of in-mempool ancestors (including this one) with fee deltas used for mining priority in " + CURRENCY_ATOM + " (if transaction is in the mempool)"},
                             {RPCResult::Type::STR_HEX, "redeemScript", /*optional=*/true, "The redeem script if the output script is P2SH"},
                             {RPCResult::Type::STR, "witnessScript", /*optional=*/true, "witness script if the output script is P2WSH or P2SH-P2WSH"},
                             {RPCResult::Type::BOOL, "spendable", "(DEPRECATED) Always true"},
@@ -519,9 +537,9 @@ RPCMethod listunspent()
                 RPCExamples{
                     HelpExampleCli("listunspent", "")
             + HelpExampleCli("listunspent", "6 9999999 \"[\\\"" + EXAMPLE_ADDRESS[0] + "\\\",\\\"" + EXAMPLE_ADDRESS[1] + "\\\"]\"")
-            + HelpExampleRpc("listunspent", "6, 9999999 \"[\\\"" + EXAMPLE_ADDRESS[0] + "\\\",\\\"" + EXAMPLE_ADDRESS[1] + "\\\"]\"")
-            + HelpExampleCli("listunspent", "6 9999999 '[]' true '{ \"minimumAmount\": 0.005 }'")
-            + HelpExampleRpc("listunspent", "6, 9999999, [] , true, { \"minimumAmount\": 0.005 } ")
+            + HelpExampleRpc("listunspent", strprintf(R"(6, 9999999, ["%s","%s"])", EXAMPLE_ADDRESS[0], EXAMPLE_ADDRESS[1]))
+            + HelpExampleCli("listunspent", "6 9999999 '[]' true '{ \"minimum_amount\": 0.005 }'")
+            + HelpExampleRpc("listunspent", "6, 9999999, [] , true, { \"minimum_amount\": 0.005 } ")
                 },
         [](const RPCMethod& self, const JSONRPCRequest& request) -> UniValue
 {
@@ -530,15 +548,8 @@ RPCMethod listunspent()
 
     const auto& chainman = EnsureChainman(EnsureAnyNodeContext(request));
 
-    int nMinDepth = 1;
-    if (!request.params[0].isNull()) {
-        nMinDepth = request.params[0].getInt<int>();
-    }
-
-    int nMaxDepth = 9999999;
-    if (!request.params[1].isNull()) {
-        nMaxDepth = request.params[1].getInt<int>();
-    }
+    const int nMinDepth{self.Arg<int>("minconf")};
+    const int nMaxDepth{self.Arg<int>("maxconf")};
 
     std::set<CTxDestination> destinations;
     if (!request.params[2].isNull()) {
@@ -555,10 +566,7 @@ RPCMethod listunspent()
         }
     }
 
-    bool include_unsafe = true;
-    if (!request.params[3].isNull()) {
-        include_unsafe = request.params[3].get_bool();
-    }
+    const bool include_unsafe{self.Arg<bool>("include_unsafe")};
 
     CoinFilterParams filter_coins;
     filter_coins.min_amount = 0;
@@ -568,26 +576,30 @@ RPCMethod listunspent()
 
         RPCTypeCheckObj(options,
             {
+                {"minimum_amount", UniValueType()},
                 {"minimumAmount", UniValueType()},
+                {"maximum_amount", UniValueType()},
                 {"maximumAmount", UniValueType()},
+                {"minimum_sum_amount", UniValueType()},
                 {"minimumSumAmount", UniValueType()},
+                {"maximum_count", UniValueType(UniValue::VNUM)},
                 {"maximumCount", UniValueType(UniValue::VNUM)},
                 {"include_immature_coinbase", UniValueType(UniValue::VBOOL)},
                 {"includeNames", UniValueType(UniValue::VBOOL)},
             },
             true, true);
 
-        if (options.exists("minimumAmount"))
-            filter_coins.min_amount = AmountFromValue(options["minimumAmount"]);
+        if (const UniValue* value = GetOptionWithAlias(options, "minimum_amount", "minimumAmount"))
+            filter_coins.min_amount = AmountFromValue(*value);
 
-        if (options.exists("maximumAmount"))
-            filter_coins.max_amount = AmountFromValue(options["maximumAmount"]);
+        if (const UniValue* value = GetOptionWithAlias(options, "maximum_amount", "maximumAmount"))
+            filter_coins.max_amount = AmountFromValue(*value);
 
-        if (options.exists("minimumSumAmount"))
-            filter_coins.min_sum_amount = AmountFromValue(options["minimumSumAmount"]);
+        if (const UniValue* value = GetOptionWithAlias(options, "minimum_sum_amount", "minimumSumAmount"))
+            filter_coins.min_sum_amount = AmountFromValue(*value);
 
-        if (options.exists("maximumCount"))
-            filter_coins.max_count = options["maximumCount"].getInt<int64_t>();
+        if (const UniValue* value = GetOptionWithAlias(options, "maximum_count", "maximumCount"))
+            filter_coins.max_count = value->getInt<int64_t>();
 
         if (options.exists("include_immature_coinbase")) {
             filter_coins.include_immature_coinbase = options["include_immature_coinbase"].get_bool();

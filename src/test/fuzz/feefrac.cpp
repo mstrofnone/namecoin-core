@@ -2,15 +2,17 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <util/feefrac.h>
+
 #include <arith_uint256.h>
 #include <policy/feerate.h>
-#include <util/feefrac.h>
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
+#include <util/check.h>
 
-#include <compare>
 #include <cmath>
+#include <compare>
 #include <cstdint>
 #include <iostream>
 
@@ -84,9 +86,9 @@ FUZZ_TARGET(feefrac)
 
     // Feerate comparisons
     auto cmp_feerate = MulCompare(f1, s2, f2, s1);
-    assert(FeeRateCompare(fr1, fr2) == cmp_feerate);
-    assert((fr1 << fr2) == std::is_lt(cmp_feerate));
-    assert((fr1 >> fr2) == std::is_gt(cmp_feerate));
+    assert((ByRatio{fr1} <=> ByRatio{fr2}) == cmp_feerate);
+    assert((ByRatio{fr1} < ByRatio{fr2}) == std::is_lt(cmp_feerate));
+    assert((ByRatio{fr1} > ByRatio{fr2}) == std::is_gt(cmp_feerate));
 
     // Compare with manual invocation of FeeFrac::Mul.
     auto cmp_mul = FeeFrac::Mul(f1, s2) <=> FeeFrac::Mul(f2, s1);
@@ -98,13 +100,13 @@ FUZZ_TARGET(feefrac)
 
     // Total order comparisons
     auto cmp_total = std::is_eq(cmp_feerate) ? (s2 <=> s1) : cmp_feerate;
-    assert((fr1 <=> fr2) == cmp_total);
-    assert((fr1 < fr2) == std::is_lt(cmp_total));
-    assert((fr1 > fr2) == std::is_gt(cmp_total));
-    assert((fr1 <= fr2) == std::is_lteq(cmp_total));
-    assert((fr1 >= fr2) == std::is_gteq(cmp_total));
-    assert((fr1 == fr2) == std::is_eq(cmp_total));
-    assert((fr1 != fr2) == std::is_neq(cmp_total));
+    assert((ByRatioNegSize{fr1} <=> ByRatioNegSize{fr2}) == cmp_total);
+    assert((ByRatioNegSize{fr1} < ByRatioNegSize{fr2}) == std::is_lt(cmp_total));
+    assert((ByRatioNegSize{fr1} > ByRatioNegSize{fr2}) == std::is_gt(cmp_total));
+    assert((ByRatioNegSize{fr1} <= ByRatioNegSize{fr2}) == std::is_lteq(cmp_total));
+    assert((ByRatioNegSize{fr1} >= ByRatioNegSize{fr2}) == std::is_gteq(cmp_total));
+    assert((ByRatioNegSize{fr1} == ByRatioNegSize{fr2}) == std::is_eq(cmp_total));
+    assert((ByRatioNegSize{fr1} != ByRatioNegSize{fr2}) == std::is_neq(cmp_total));
 }
 
 FUZZ_TARGET(feefrac_div_fallback)
@@ -219,15 +221,11 @@ FUZZ_TARGET(feefrac_mul_div)
             FeeFrac{mul64, div}.EvaluateFeeUp(mul32);
         assert(res == res_fee);
 
-        // Compare approximately with CFeeRate.
-        if (mul64 < std::numeric_limits<int64_t>::max() / 1000 &&
-            mul64 > std::numeric_limits<int64_t>::min() / 1000 &&
-            quot_abs < arith_uint256{std::numeric_limits<int64_t>::max() / 1000}) {
+        // Compare exactly with CFeeRate::GetFee, which rounds up.
+        if (!round_down) {
             CFeeRate feerate(mul64, div);
             CAmount feerate_fee{feerate.GetFee(mul32)};
-            auto allowed_gap = static_cast<int64_t>(mul32 / 1000 + 3 + round_down);
-            assert(feerate_fee - res_fee >= -allowed_gap);
-            assert(feerate_fee - res_fee <= allowed_gap);
+            assert(feerate_fee == res_fee);
         }
     }
 }

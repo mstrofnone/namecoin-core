@@ -2,6 +2,7 @@
 
 #include <interfaces/node.h>
 #include <qt/clientmodel.h>
+#include <qt/guiutil.h>
 #include <qt/transactiontablemodel.h>
 #include <qt/walletmodel.h>
 
@@ -91,6 +92,8 @@ public:
             // actually went wrong so they can potentially recover
             const UniValue message = e.find_value( "message");
             LogDebug(BCLog::QT, "name_list lookup error: %s\n", message.get_str());
+        } catch (const std::exception& e) {
+            LogDebug(BCLog::QT, "name_list lookup error: %s\n", e.what());
         }
 
         // will be an object if name_list command isn't available/other error
@@ -156,6 +159,8 @@ public:
             // actually went wrong so they can potentially recover
             const UniValue message = e.find_value( "message");
             LogDebug(BCLog::QT, "name_pending lookup error: %s\n", message.get_str());
+        } catch (const std::exception& e) {
+            LogDebug(BCLog::QT, "name_pending lookup error: %s\n", e.what());
         }
 
         // will be an object if name_pending command isn't available/other error
@@ -382,10 +387,13 @@ NameTableModel::NameTableModel(const PlatformStyle *platformStyle, WalletModel *
     // We can't init the name table from the constructor because executeRpc
     // locks context.wallets_mutex, which is already taken if we're creating a
     // new wallet.  So we use this stupid timer signal trick to delay the init.
-    connect(walletModel, &WalletModel::timerTimeout, this, &NameTableModel::init);
+    GUIUtil::ExceptionSafeConnect(walletModel, &WalletModel::timerTimeout, this, &NameTableModel::init);
 
-    connect(&walletModel->clientModel(), &ClientModel::numBlocksChanged, this, &NameTableModel::updateExpiration);
+    GUIUtil::ExceptionSafeConnect(&walletModel->clientModel(), &ClientModel::numBlocksChanged, this, &NameTableModel::updateExpiration);
 
+    // NOTE: rowsInserted is a Qt private signal (QPrivateSignal), which is
+    // incompatible with ExceptionSafeConnect's generic variadic lambda. Use a
+    // plain connect() here, consistent with how WalletView does it.
     connect(walletModel->getTransactionTableModel(), &TransactionTableModel::rowsInserted, this, &NameTableModel::processNewTransaction);
 }
 

@@ -2,10 +2,12 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <util/bitdeque.h>
+
 #include <random.h>
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/util.h>
-#include <util/bitdeque.h>
+#include <util/check.h>
 
 #include <deque>
 #include <vector>
@@ -54,8 +56,7 @@ FUZZ_TARGET(bitdeque, .init = InitRandData)
     }
 
     const auto iter_limit{maxlen > 6000 ? 90U : 900U};
-    LIMITED_WHILE(provider.remaining_bytes() > 0, iter_limit)
-    {
+    LIMITED_WHILE (provider.remaining_bytes() > 0, iter_limit) {
         CallOneOf(
             provider,
             [&] {

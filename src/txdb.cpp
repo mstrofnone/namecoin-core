@@ -16,11 +16,15 @@
 #include <uint256.h>
 #include <util/byte_units.h>
 #include <util/log.h>
+#include <util/threadnames.h>
 #include <util/vector.h>
 #include <validation.h>
 
 #include <cassert>
+#include <chrono>
 #include <cstdlib>
+#include <exception>
+#include <future>
 #include <iterator>
 #include <utility>
 
@@ -65,11 +69,22 @@ CCoinsViewDB::CCoinsViewDB(DBParams db_params, CoinsViewOptions options) :
     m_options{std::move(options)},
     m_db{std::make_unique<CDBWrapper>(m_db_params)} { }
 
+CCoinsViewDB::~CCoinsViewDB()
+{
+    if (m_compaction.valid()) {
+        if (m_compaction.wait_for(std::chrono::seconds{0}) != std::future_status::ready) {
+            LogInfo("Waiting for background chainstate compaction of %s", fs::PathToString(m_db_params.path));
+        }
+        m_compaction.wait();
+    }
+}
+
 void CCoinsViewDB::ResizeCache(size_t new_cache_size)
 {
     // We can't do this operation with an in-memory DB since we'll lose all the coins upon
     // reset.
     if (!m_db_params.memory_only) {
+        LOCK(m_db_mutex);
         // Have to do a reset first to get the original `m_db` state to release its
         // filesystem lock.
         m_db.reset();
@@ -81,11 +96,24 @@ void CCoinsViewDB::ResizeCache(size_t new_cache_size)
 
 std::optional<Coin> CCoinsViewDB::GetCoin(const COutPoint& outpoint) const
 {
-    if (Coin coin; m_db->Read(CoinEntry(&outpoint), coin)) {
-        Assert(!coin.IsSpent()); // The UTXO database should never contain spent coins
-        return coin;
+    Coin coin;
+    const CDBWrapper::ReadStatus res = m_db->TryRead(CoinEntry(&outpoint), coin);
+    if (!res) {
+        // Propagate errors so CCoinsViewErrorCatcher triggers a clean shutdown.
+        switch (const auto& [err_code, err_msg] = res.error(); err_code) {
+            case CDBWrapper::ReadFailure::Code::DeserializationError:
+                throw dbwrapper_error{strprintf("Coin deserialization failure: %s", err_msg)};
+            case CDBWrapper::ReadFailure::Code::DatabaseError:
+                throw dbwrapper_error{strprintf("Coin DB read failure: %s", err_msg)};
+        } // no default case, so the compiler can warn about missing cases
+        std::abort(); // unreachable
     }
-    return std::nullopt;
+
+    // Check whether the coin exists
+    if (!res.value()) return std::nullopt;
+    // Coin found, ensure UTXO database never contains spent coins
+    Assert(!coin.IsSpent());
+    return coin;
 }
 
 std::optional<Coin> CCoinsViewDB::PeekCoin(const COutPoint& outpoint) const
@@ -281,6 +309,30 @@ void CCoinsViewDB::BatchWrite(CoinsViewCacheCursor& cursor, const uint256& block
 size_t CCoinsViewDB::EstimateSize() const
 {
     return m_db->EstimateSize(DB_COIN, uint8_t(DB_COIN + 1));
+}
+
+std::optional<std::string> CCoinsViewDB::GetDBProperty(const std::string& property)
+{
+    return m_db->GetProperty(property);
+}
+
+std::shared_future<void> CCoinsViewDB::CompactFullAsync()
+{
+    AssertLockHeld(::cs_main);
+    if (m_compaction.valid() && m_compaction.wait_for(std::chrono::seconds{0}) != std::future_status::ready) return m_compaction;
+    m_compaction = std::async(std::launch::async, [this] {
+        try {
+            util::ThreadRename("utxocompact");
+            LOCK(m_db_mutex);
+
+            LogDebug(BCLog::COINDB, "Starting chainstate compaction of %s", fs::PathToString(m_db_params.path));
+            m_db->CompactFull();
+            LogDebug(BCLog::COINDB, "Finished chainstate compaction of %s", fs::PathToString(m_db_params.path));
+        } catch (const std::exception& e) {
+            LogWarning("Failed chainstate compaction (%s)", e.what());
+        }
+    }).share();
+    return m_compaction;
 }
 
 /** Specialization of CCoinsViewCursor to iterate over a CCoinsViewDB */

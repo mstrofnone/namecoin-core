@@ -2,16 +2,18 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or https://opensource.org/license/mit.
 
+#include <headerssync.h>
+
 #include <arith_uint256.h>
 #include <chain.h>
 #include <chainparams.h>
-#include <headerssync.h>
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
 #include <test/util/setup_common.h>
 #include <test/util/time.h>
 #include <uint256.h>
 #include <util/chaintype.h>
+#include <util/check.h>
 #include <util/time.h>
 #include <validation.h>
 
@@ -60,7 +62,7 @@ FUZZ_TARGET(headers_sync_state, .init = initialize_headers_sync_state_fuzz)
     CBlockHeader genesis_header{Params().GenesisBlock()};
     CBlockIndex start_index(genesis_header);
 
-    NodeClockContext clock_ctx{ConsumeTime(fuzzed_data_provider, /*min=*/start_index.GetMedianTimePast())};
+    FakeNodeClock clock{ConsumeTime(fuzzed_data_provider, /*min=*/start_index.GetMedianTimePast())};
 
     const uint256 genesis_hash = genesis_header.GetHash();
     start_index.phashBlock = &genesis_hash;

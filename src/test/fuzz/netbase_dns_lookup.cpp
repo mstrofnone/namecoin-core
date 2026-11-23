@@ -7,6 +7,7 @@
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util/net.h>
+#include <util/check.h>
 
 #include <cstdint>
 #include <string>
@@ -22,7 +23,7 @@ FUZZ_TARGET(netbase_dns_lookup)
 
     auto fuzzed_dns_lookup_function = [&](const std::string&, bool) {
         std::vector<CNetAddr> resolved_addresses;
-        LIMITED_WHILE(fuzzed_data_provider.ConsumeBool(), 10000) {
+        LIMITED_WHILE (fuzzed_data_provider.ConsumeBool(), 10000) {
             resolved_addresses.push_back(ConsumeNetAddr(fuzzed_data_provider));
         }
         return resolved_addresses;

@@ -7,12 +7,12 @@
 #include <common/args.h>
 #include <crypto/hmac_sha256.h>
 #include <httpserver.h>
-#include <logging.h>
 #include <netaddress.h>
 #include <rpc/protocol.h>
 #include <rpc/server.h>
 #include <util/fs.h>
 #include <util/fs_helpers.h>
+#include <util/log.h>
 #include <util/strencodings.h>
 #include <util/string.h>
 #include <walletinitinterface.h>
@@ -157,15 +157,19 @@ UniValue ExecuteHTTPRPC(const UniValue& valRequest, JSONRPCRequest& jreq, HTTPSt
                 // Batches never throw HTTP errors, they are always just included
                 // in "HTTP OK" responses. Notifications never get any response.
                 UniValue response;
+                // Each element gets its own copy of the unparsed request, so
+                // that nothing parsed from one element ends up in the reply to
+                // the next
+                JSONRPCRequest elem_jreq{jreq};
                 try {
-                    jreq.parse(valRequest[i]);
-                    response = JSONRPCExec(jreq, /*catch_errors=*/true);
+                    elem_jreq.parse(valRequest[i]);
+                    response = JSONRPCExec(elem_jreq, /*catch_errors=*/true);
                 } catch (UniValue& e) {
-                    response = JSONRPCReplyObj(NullUniValue, std::move(e), jreq.id, jreq.m_json_version);
+                    response = JSONRPCReplyObj(NullUniValue, std::move(e), elem_jreq.id, elem_jreq.m_json_version);
                 } catch (const std::exception& e) {
-                    response = JSONRPCReplyObj(NullUniValue, JSONRPCError(RPC_PARSE_ERROR, e.what()), jreq.id, jreq.m_json_version);
+                    response = JSONRPCReplyObj(NullUniValue, JSONRPCError(RPC_PARSE_ERROR, e.what()), elem_jreq.id, elem_jreq.m_json_version);
                 }
-                if (!jreq.IsNotification()) {
+                if (!elem_jreq.IsNotification()) {
                     reply.push_back(std::move(response));
                 }
             }
@@ -196,13 +200,13 @@ UniValue ExecuteHTTPRPC(const UniValue& valRequest, JSONRPCRequest& jreq, HTTPSt
 static void HTTPReq_JSONRPC(const std::any& context, HTTPRequest* req)
 {
     // JSONRPC handles only POST
-    if (req->GetRequestMethod() != HTTPRequest::POST) {
+    if (req->GetRequestMethod() != HTTPRequestMethod::POST) {
         req->WriteReply(HTTP_BAD_METHOD, "JSONRPC server handles only POST requests");
         return;
     }
     // Check authorization
-    std::pair<bool, std::string> authHeader = req->GetHeader("authorization");
-    if (!authHeader.first) {
+    std::optional<std::string> auth_header = req->GetHeader("authorization");
+    if (!auth_header) {
         req->WriteHeader("WWW-Authenticate", WWW_AUTH_HEADER_DATA);
         req->WriteReply(HTTP_UNAUTHORIZED);
         return;
@@ -212,7 +216,7 @@ static void HTTPReq_JSONRPC(const std::any& context, HTTPRequest* req)
     jreq.context = context;
     jreq.peerAddr = req->GetPeer().ToStringAddrPort();
     jreq.URI = req->GetURI();
-    if (!RPCAuthorized(authHeader.second, jreq.authUser)) {
+    if (!RPCAuthorized(*auth_header, jreq.authUser)) {
         LogWarning("ThreadRPCServer incorrect password attempt from %s", jreq.peerAddr);
 
         /* Deter brute-forcing
@@ -347,8 +351,6 @@ bool StartHTTPRPC(const std::any& context)
     if (g_wallet_init_interface.HasWalletSupport()) {
         RegisterHTTPHandler("/wallet/", false, handle_rpc);
     }
-    struct event_base* eventBase = EventBase();
-    assert(eventBase);
     return true;
 }
 

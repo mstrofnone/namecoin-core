@@ -29,10 +29,11 @@ import subprocess
 import textwrap
 
 from test_framework.blocktools import (
+    DIFFICULTY_ADJUSTMENT_INTERVAL,
     MAX_FUTURE_BLOCK_TIME,
     TIME_GENESIS_BLOCK,
-    REGTEST_N_BITS,
-    REGTEST_TARGET,
+    N_BITS,
+    TARGET,
     create_block,
     create_coinbase,
     create_tx_with_script,
@@ -66,7 +67,6 @@ TIME_RANGE_STEP = 600  # ten-minute steps
 TIME_RANGE_MTP = TIME_GENESIS_BLOCK + (HEIGHT - 6) * TIME_RANGE_STEP
 TIME_RANGE_TIP = TIME_GENESIS_BLOCK + (HEIGHT - 1) * TIME_RANGE_STEP
 TIME_RANGE_END = TIME_GENESIS_BLOCK + HEIGHT * TIME_RANGE_STEP
-DIFFICULTY_ADJUSTMENT_INTERVAL = 144
 
 
 class BlockchainTest(BitcoinTestFramework):
@@ -207,8 +207,8 @@ class BlockchainTest(BitcoinTestFramework):
         assert_equal(res['prune_target_size'], 576716800)
         assert_greater_than(res['size_on_disk'], 0)
 
-        assert_equal(res['bits'], nbits_str(REGTEST_N_BITS))
-        assert_equal(res['target'], target_str(REGTEST_TARGET))
+        assert_equal(res['bits'], nbits_str(N_BITS))
+        assert_equal(res['target'], target_str(TARGET))
 
     def check_signalling_deploymentinfo_result(self, gdi_result, height, blockhash, status_next):
         assert height >= 144 and height <= 287
@@ -269,6 +269,8 @@ class BlockchainTest(BitcoinTestFramework):
         self.log.info("Check that block timestamps work until year 2106")
         self.generate(self.nodes[0], 8)[-1]
         time_2106 = 2**32 - 1
+        assert_raises_rpc_error(-8, f"Mocktime must be in the range [0, {time_2106}], not -1.", self.nodes[0].setmocktime, -1)
+        assert_raises_rpc_error(-8, f"Mocktime must be in the range [0, {time_2106}], not {time_2106 + 1}.", self.nodes[0].setmocktime, time_2106 + 1)
         self.nodes[0].setmocktime(time_2106)
         last = self.generate(self.nodes[0], 6)[-1]
         assert_equal(self.nodes[0].getblockheader(last)["mediantime"], time_2106)
@@ -436,8 +438,8 @@ class BlockchainTest(BitcoinTestFramework):
         assert_is_hash_string(header['hash'])
         assert_is_hash_string(header['previousblockhash'])
         assert_is_hash_string(header['merkleroot'])
-        assert_equal(header['bits'], nbits_str(REGTEST_N_BITS))
-        assert_equal(header['target'], target_str(REGTEST_TARGET))
+        assert_equal(header['bits'], nbits_str(N_BITS))
+        assert_equal(header['target'], target_str(TARGET))
         assert isinstance(header['time'], int)
         assert_equal(header['mediantime'], TIME_RANGE_MTP)
         assert isinstance(header['nonce'], int)

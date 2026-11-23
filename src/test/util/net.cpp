@@ -56,7 +56,7 @@ void ConnmanTestMsg::Handshake(CNode& node,
     FlushSendBuffer(node); // Drop the verack message added by SendMessages.
     if (node.fDisconnect) return;
     assert(node.nVersion == version);
-    assert(node.GetCommonVersion() == std::min(version, PROTOCOL_VERSION));
+    assert(node.GetCommonVersion() == std::min(version, node.AdvertisedVersion()));
     CNodeStateStats statestats;
     assert(peerman.GetNodeStateStats(node.GetId(), statestats));
     assert(statestats.m_relay_txs == (relay_txs && !node.IsBlockOnlyConn()));
@@ -263,7 +263,7 @@ StaticContentsSock& StaticContentsSock::operator=(Sock&& other)
 
 ssize_t DynSock::Pipe::GetBytes(void* buf, size_t len, int flags)
 {
-    WAIT_LOCK(m_mutex, lock);
+    LOCK(m_mutex);
 
     if (m_data.empty()) {
         if (m_eof) {
@@ -283,67 +283,17 @@ ssize_t DynSock::Pipe::GetBytes(void* buf, size_t len, int flags)
     return read_bytes;
 }
 
-std::optional<CNetMessage> DynSock::Pipe::GetNetMsg()
-{
-    V1Transport transport{NodeId{0}};
-
-    {
-        WAIT_LOCK(m_mutex, lock);
-
-        WaitForDataOrEof(lock);
-        if (m_eof && m_data.empty()) {
-            return std::nullopt;
-        }
-
-        for (;;) {
-            std::span<const uint8_t> s{m_data};
-            if (!transport.ReceivedBytes(s)) {  // Consumed bytes are removed from the front of s.
-                return std::nullopt;
-            }
-            m_data.erase(m_data.begin(), m_data.begin() + m_data.size() - s.size());
-            if (transport.ReceivedMessageComplete()) {
-                break;
-            }
-            if (m_data.empty()) {
-                WaitForDataOrEof(lock);
-                if (m_eof && m_data.empty()) {
-                    return std::nullopt;
-                }
-            }
-        }
-    }
-
-    bool reject{false};
-    CNetMessage msg{transport.GetReceivedMessage(/*time=*/{}, reject)};
-    if (reject) {
-        return std::nullopt;
-    }
-    return std::make_optional<CNetMessage>(std::move(msg));
-}
-
 void DynSock::Pipe::PushBytes(const void* buf, size_t len)
 {
     LOCK(m_mutex);
     const uint8_t* b = static_cast<const uint8_t*>(buf);
     m_data.insert(m_data.end(), b, b + len);
-    m_cond.notify_all();
 }
 
 void DynSock::Pipe::Eof()
 {
     LOCK(m_mutex);
     m_eof = true;
-    m_cond.notify_all();
-}
-
-void DynSock::Pipe::WaitForDataOrEof(UniqueLock<Mutex>& lock)
-{
-    Assert(lock.mutex() == &m_mutex);
-
-    m_cond.wait(lock, [&]() EXCLUSIVE_LOCKS_REQUIRED(m_mutex) {
-        AssertLockHeld(m_mutex);
-        return !m_data.empty() || m_eof;
-    });
 }
 
 DynSock::DynSock(std::shared_ptr<Pipes> pipes, Queue* accept_sockets)
@@ -400,17 +350,17 @@ bool DynSock::WaitMany(std::chrono::milliseconds timeout, EventsPerSock& events_
     for (;;) {
         // Check all sockets for readiness without waiting.
         for (auto& [sock, events] : events_per_sock) {
-            if ((events.requested & Sock::SEND) != 0) {
+            if ((events.requested & Sock::SendEvent) != 0) {
                 // Always ready for Send().
-                events.occurred |= Sock::SEND;
+                events.occurred |= Sock::SendEvent;
                 at_least_one_event_occurred = true;
             }
 
-            if ((events.requested & Sock::RECV) != 0) {
+            if ((events.requested & Sock::RecvEvent) != 0) {
                 auto dyn_sock = reinterpret_cast<const DynSock*>(sock.get());
                 uint8_t b;
                 if (dyn_sock->m_pipes->recv.GetBytes(&b, 1, MSG_PEEK) == 1 || (dyn_sock->m_accept_sockets && !dyn_sock->m_accept_sockets->Empty())) {
-                    events.occurred |= Sock::RECV;
+                    events.occurred |= Sock::RecvEvent;
                     at_least_one_event_occurred = true;
                 }
             }

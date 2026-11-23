@@ -7,6 +7,7 @@
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
+#include <util/check.h>
 
 #include <array>
 #include <cstddef>
@@ -20,7 +21,7 @@ FUZZ_TARGET(crypto_chacha20)
     const auto key = ConsumeFixedLengthByteVector<std::byte>(fuzzed_data_provider, ChaCha20::KEYLEN);
     ChaCha20 chacha20{key};
 
-    LIMITED_WHILE(fuzzed_data_provider.ConsumeBool(), 10000) {
+    LIMITED_WHILE (fuzzed_data_provider.ConsumeBool(), 10000) {
         CallOneOf(
             fuzzed_data_provider,
             [&] {
@@ -144,8 +145,7 @@ FUZZ_TARGET(crypto_fschacha20)
 
     auto fsc20 = FSChaCha20{key, fuzzed_data_provider.ConsumeIntegralInRange<uint32_t>(1, 1024)};
 
-    LIMITED_WHILE(fuzzed_data_provider.ConsumeBool(), 10000)
-    {
+    LIMITED_WHILE (fuzzed_data_provider.ConsumeBool(), 10000) {
         auto input = fuzzed_data_provider.ConsumeBytes<std::byte>(fuzzed_data_provider.ConsumeIntegralInRange(0, 4096));
         std::vector<std::byte> output;
         output.resize(input.size());

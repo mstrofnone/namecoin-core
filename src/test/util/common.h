@@ -5,12 +5,30 @@
 #ifndef BITCOIN_TEST_UTIL_COMMON_H
 #define BITCOIN_TEST_UTIL_COMMON_H
 
+// This file defines concepts and operator<< overloads such that
+// Bitcoin Core types are printable by BOOST_CHECK_*. Include this from
+// *_tests.cpp to get value output on failure; browse this file for
+// the list of supported types.
+
+#include <addresstype.h>
 #include <coins.h>
+#include <util/feefrac.h>
 
 #include <chrono>
 #include <optional>
 #include <ostream>
 #include <string>
+#include <utility>
+
+struct AddressPosition;
+class CAddress;
+struct CExtKey;
+struct CExtPubKey;
+class CPubKey;
+class CScript;
+class CService;
+struct KeyOriginInfo;
+class XOnlyPubKey;
 
 /**
  * BOOST_CHECK_EXCEPTION predicates to check the specific validation error.
@@ -59,16 +77,35 @@ inline std::ostream& operator<<(std::ostream& os, const T& obj)
     return os << obj.ToString();
 }
 
-// @}
+std::ostream& operator<<(std::ostream& os, const AddressPosition& pos);
+std::ostream& operator<<(std::ostream& os, const CScript& script);
+std::ostream& operator<<(std::ostream& os, const CService& service);
+std::ostream& operator<<(std::ostream& os, const CAddress& addr);
+std::ostream& operator<<(std::ostream& os, const CExtKey& k);
+std::ostream& operator<<(std::ostream& os, const CExtPubKey& k);
+std::ostream& operator<<(std::ostream& os, const FeeFrac& ff);
+std::ostream& operator<<(std::ostream& os, const CNoDestination& dest);
+std::ostream& operator<<(std::ostream& os, const PubKeyDestination& dest);
+std::ostream& operator<<(std::ostream& os, const PKHash& h);
+std::ostream& operator<<(std::ostream& os, const ScriptHash& h);
+std::ostream& operator<<(std::ostream& os, const WitnessV0KeyHash& h);
+std::ostream& operator<<(std::ostream& os, const WitnessV0ScriptHash& h);
+std::ostream& operator<<(std::ostream& os, const WitnessUnknown& w);
+std::ostream& operator<<(std::ostream& os, const PayToAnchor& p);
+std::ostream& operator<<(std::ostream& os, const WitnessV1Taproot& t);
+std::ostream& operator<<(std::ostream& os, const CTxDestination& dest);
+std::ostream& operator<<(std::ostream& os, const CPubKey& pk);
+std::ostream& operator<<(std::ostream& os, const KeyOriginInfo& info);
+std::ostream& operator<<(std::ostream& os, const ByRatioNegSize<FeeFrac>& b);
+std::ostream& operator<<(std::ostream& os, const XOnlyPubKey& x);
 
-// Define == for coin equality (used by multiple tests).
-inline bool
-operator==(const Coin &a, const Coin &b) {
-    // Empty Coin objects are always equal.
-    if (a.IsSpent() && b.IsSpent()) return true;
-    return a.fCoinBase == b.fCoinBase &&
-           a.nHeight == b.nHeight &&
-           a.out == b.out;
+template <typename T, typename U>
+    requires requires(std::ostream& os, const T& t, const U& u) { os << t; os << u; }
+inline std::ostream& operator<<(std::ostream& os, const std::pair<T, U>& p)
+{
+    return os << "std::pair(" << p.first << ", " << p.second << ")";
 }
+
+// @}
 
 #endif // BITCOIN_TEST_UTIL_COMMON_H
